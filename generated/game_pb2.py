@@ -24,17 +24,17 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ngame.proto\x12\x0cguessinggame\")\n\x06Player\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"&\n\x0fJoinGameRequest\x12\x13\n\x0bplayer_name\x18\x01 \x01(\t\"n\n\x10JoinGameResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\tplayer_id\x18\x03 \x01(\t\x12%\n\x07players\x18\x04 \x03(\x0b\x32\x14.guessinggame.Player\"%\n\x10SubscribeRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"3\n\x0f\x43ommandResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"\xe4\x02\n\tGameEvent\x12)\n\x04type\x18\x01 \x01(\x0e\x32\x1b.guessinggame.GameEventType\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x17\n\x0f\x61\x63tor_player_id\x18\x03 \x01(\t\x12\x18\n\x10target_player_id\x18\x04 \x01(\t\x12\x19\n\x11timestamp_unix_ms\x18\x05 \x01(\x03\x12\x13\n\x0bobject_name\x18\x06 \x01(\t\x12\r\n\x05theme\x18\x07 \x01(\t\x12\x1e\n\x16\x63urrent_turn_player_id\x18\x08 \x01(\t\x12 \n\x18\x63urrent_turn_player_name\x18\t \x01(\t\x12\x13\n\x0bpublic_hint\x18\n \x01(\t\x12+\n\nturn_phase\x18\x0b \x01(\x0e\x32\x17.guessinggame.TurnPhase\x12%\n\x07players\x18\x0c \x03(\x0b\x32\x14.guessinggame.Player\"%\n\x10StartGameRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"8\n\x15SendPublicHintRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04hint\x18\x02 \x01(\t\"W\n\x12SubmitGuessRequest\x12\x19\n\x11guesser_player_id\x18\x01 \x01(\t\x12\x17\n\x0fowner_player_id\x18\x02 \x01(\t\x12\r\n\x05guess\x18\x03 \x01(\t\"0\n\x1bPassGuessOpportunityRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"\\\n\x14ValidateGuessRequest\x12\x17\n\x0fowner_player_id\x18\x01 \x01(\t\x12\x19\n\x11guesser_player_id\x18\x02 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x03 \x01(\x08\"i\n\x1aRequestHintExchangeRequest\x12\x1b\n\x13requester_player_id\x18\x01 \x01(\t\x12\x18\n\x10target_player_id\x18\x02 \x01(\t\x12\x14\n\x0cprivate_hint\x18\x03 \x01(\t\"~\n\x1aRespondHintExchangeRequest\x12\x1b\n\x13responder_player_id\x18\x01 \x01(\t\x12\x1b\n\x13requester_player_id\x18\x02 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x03 \x01(\x08\x12\x14\n\x0cprivate_hint\x18\x04 \x01(\t\"W\n\x14SpyOnExchangeRequest\x12\x15\n\rspy_player_id\x18\x01 \x01(\t\x12\x13\n\x0bplayer_a_id\x18\x02 \x01(\t\x12\x13\n\x0bplayer_b_id\x18\x03 \x01(\t\"5\n\x12\x43hatMessageRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\"\\\n\tChatEvent\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x13\n\x0bplayer_name\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x19\n\x11timestamp_unix_ms\x18\x04 \x01(\x03*\xfe\x02\n\rGameEventType\x12\x16\n\x12GAME_EVENT_UNKNOWN\x10\x00\x12\x11\n\rPLAYER_JOINED\x10\x01\x12\x10\n\x0cGAME_STARTED\x10\x02\x12\x14\n\x10PUBLIC_HINT_SENT\x10\x03\x12\x13\n\x0fGUESS_SUBMITTED\x10\x04\x12\x13\n\x0fGUESS_VALIDATED\x10\x05\x12\x1b\n\x17HINT_EXCHANGE_REQUESTED\x10\x06\x12\x1b\n\x17HINT_EXCHANGE_RESPONDED\x10\x07\x12\x1a\n\x16HINT_EXCHANGE_OCCURRED\x10\x08\x12\x11\n\rSPY_ATTEMPTED\x10\t\x12\x11\n\rSCORE_UPDATED\x10\n\x12\x13\n\x0fOBJECT_ASSIGNED\x10\x0b\x12\x10\n\x0cTURN_STARTED\x10\x0c\x12\x17\n\x13GUESS_PHASE_STARTED\x10\r\x12\x1c\n\x18GUESS_OPPORTUNITY_PASSED\x10\x0e\x12\x16\n\x12HINT_PHASE_STARTED\x10\x0f*X\n\tTurnPhase\x12\x16\n\x12TURN_PHASE_UNKNOWN\x10\x00\x12\x12\n\x0ePRE_HINT_GUESS\x10\x01\x12\x08\n\x04HINT\x10\x02\x12\x15\n\x11POST_HINT_GUESSES\x10\x03\x32\xe8\x06\n\x0bGameService\x12I\n\x08JoinGame\x12\x1d.guessinggame.JoinGameRequest\x1a\x1e.guessinggame.JoinGameResponse\x12J\n\tStartGame\x12\x1e.guessinggame.StartGameRequest\x1a\x1d.guessinggame.CommandResponse\x12T\n\x0eSendPublicHint\x12#.guessinggame.SendPublicHintRequest\x1a\x1d.guessinggame.CommandResponse\x12N\n\x0bSubmitGuess\x12 .guessinggame.SubmitGuessRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\rValidateGuess\x12\".guessinggame.ValidateGuessRequest\x1a\x1d.guessinggame.CommandResponse\x12`\n\x14PassGuessOpportunity\x12).guessinggame.PassGuessOpportunityRequest\x1a\x1d.guessinggame.CommandResponse\x12^\n\x13RequestHintExchange\x12(.guessinggame.RequestHintExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12^\n\x13RespondHintExchange\x12(.guessinggame.RespondHintExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\rSpyOnExchange\x12\".guessinggame.SpyOnExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\x15SubscribeToGameEvents\x12\x1e.guessinggame.SubscribeRequest\x1a\x17.guessinggame.GameEvent0\x01\x32\xb5\x01\n\x0b\x43hatService\x12R\n\x0fSendChatMessage\x12 .guessinggame.ChatMessageRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\x15SubscribeToChatEvents\x12\x1e.guessinggame.SubscribeRequest\x1a\x17.guessinggame.ChatEvent0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ngame.proto\x12\x0cguessinggame\")\n\x06Player\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"&\n\x0fJoinGameRequest\x12\x13\n\x0bplayer_name\x18\x01 \x01(\t\"n\n\x10JoinGameResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\tplayer_id\x18\x03 \x01(\t\x12%\n\x07players\x18\x04 \x03(\x0b\x32\x14.guessinggame.Player\"%\n\x10SubscribeRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"3\n\x0f\x43ommandResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"\xd5\x04\n\tGameEvent\x12)\n\x04type\x18\x01 \x01(\x0e\x32\x1b.guessinggame.GameEventType\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x17\n\x0f\x61\x63tor_player_id\x18\x03 \x01(\t\x12\x18\n\x10target_player_id\x18\x04 \x01(\t\x12\x19\n\x11timestamp_unix_ms\x18\x05 \x01(\x03\x12\x13\n\x0bobject_name\x18\x06 \x01(\t\x12\r\n\x05theme\x18\x07 \x01(\t\x12\x1e\n\x16\x63urrent_turn_player_id\x18\x08 \x01(\t\x12 \n\x18\x63urrent_turn_player_name\x18\t \x01(\t\x12\x13\n\x0bpublic_hint\x18\n \x01(\t\x12+\n\nturn_phase\x18\x0b \x01(\x0e\x32\x17.guessinggame.TurnPhase\x12%\n\x07players\x18\x0c \x03(\x0b\x32\x14.guessinggame.Player\x12\x10\n\x08guess_id\x18\r \x01(\t\x12\x12\n\nguess_text\x18\x0e \x01(\t\x12\x1b\n\x13guesser_player_name\x18\x0f \x01(\t\x12\x19\n\x11owner_player_name\x18\x10 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x11 \x01(\x08\x12)\n\x06scores\x18\x12 \x03(\x0b\x32\x19.guessinggame.PlayerScore\x12\x13\n\x0b\x63\x61tegory_id\x18\x13 \x01(\t\x12\x15\n\rcategory_name\x18\x14 \x01(\t\x12\x14\n\x0c\x63haracter_id\x18\x15 \x01(\t\x12\x12\n\nimage_path\x18\x16 \x01(\t\"D\n\x0bPlayerScore\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x13\n\x0bplayer_name\x18\x02 \x01(\t\x12\r\n\x05score\x18\x03 \x01(\x05\"%\n\x10StartGameRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"8\n\x15SendPublicHintRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04hint\x18\x02 \x01(\t\"W\n\x12SubmitGuessRequest\x12\x19\n\x11guesser_player_id\x18\x01 \x01(\t\x12\x17\n\x0fowner_player_id\x18\x02 \x01(\t\x12\r\n\x05guess\x18\x03 \x01(\t\"0\n\x1bPassGuessOpportunityRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\"n\n\x14ValidateGuessRequest\x12\x17\n\x0fowner_player_id\x18\x01 \x01(\t\x12\x19\n\x11guesser_player_id\x18\x02 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x03 \x01(\x08\x12\x10\n\x08guess_id\x18\x04 \x01(\t\"i\n\x1aRequestHintExchangeRequest\x12\x1b\n\x13requester_player_id\x18\x01 \x01(\t\x12\x18\n\x10target_player_id\x18\x02 \x01(\t\x12\x14\n\x0cprivate_hint\x18\x03 \x01(\t\"~\n\x1aRespondHintExchangeRequest\x12\x1b\n\x13responder_player_id\x18\x01 \x01(\t\x12\x1b\n\x13requester_player_id\x18\x02 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x03 \x01(\x08\x12\x14\n\x0cprivate_hint\x18\x04 \x01(\t\"W\n\x14SpyOnExchangeRequest\x12\x15\n\rspy_player_id\x18\x01 \x01(\t\x12\x13\n\x0bplayer_a_id\x18\x02 \x01(\t\x12\x13\n\x0bplayer_b_id\x18\x03 \x01(\t\"5\n\x12\x43hatMessageRequest\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\"\\\n\tChatEvent\x12\x11\n\tplayer_id\x18\x01 \x01(\t\x12\x13\n\x0bplayer_name\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x19\n\x11timestamp_unix_ms\x18\x04 \x01(\x03*\xa9\x03\n\rGameEventType\x12\x16\n\x12GAME_EVENT_UNKNOWN\x10\x00\x12\x11\n\rPLAYER_JOINED\x10\x01\x12\x10\n\x0cGAME_STARTED\x10\x02\x12\x14\n\x10PUBLIC_HINT_SENT\x10\x03\x12\x13\n\x0fGUESS_SUBMITTED\x10\x04\x12\x13\n\x0fGUESS_VALIDATED\x10\x05\x12\x1b\n\x17HINT_EXCHANGE_REQUESTED\x10\x06\x12\x1b\n\x17HINT_EXCHANGE_RESPONDED\x10\x07\x12\x1a\n\x16HINT_EXCHANGE_OCCURRED\x10\x08\x12\x11\n\rSPY_ATTEMPTED\x10\t\x12\x11\n\rSCORE_UPDATED\x10\n\x12\x13\n\x0fOBJECT_ASSIGNED\x10\x0b\x12\x10\n\x0cTURN_STARTED\x10\x0c\x12\x17\n\x13GUESS_PHASE_STARTED\x10\r\x12\x1c\n\x18GUESS_OPPORTUNITY_PASSED\x10\x0e\x12\x16\n\x12HINT_PHASE_STARTED\x10\x0f\x12\x11\n\rROUND_STARTED\x10\x10\x12\x16\n\x12\x43HARACTER_ASSIGNED\x10\x11*X\n\tTurnPhase\x12\x16\n\x12TURN_PHASE_UNKNOWN\x10\x00\x12\x12\n\x0ePRE_HINT_GUESS\x10\x01\x12\x08\n\x04HINT\x10\x02\x12\x15\n\x11POST_HINT_GUESSES\x10\x03\x32\xe8\x06\n\x0bGameService\x12I\n\x08JoinGame\x12\x1d.guessinggame.JoinGameRequest\x1a\x1e.guessinggame.JoinGameResponse\x12J\n\tStartGame\x12\x1e.guessinggame.StartGameRequest\x1a\x1d.guessinggame.CommandResponse\x12T\n\x0eSendPublicHint\x12#.guessinggame.SendPublicHintRequest\x1a\x1d.guessinggame.CommandResponse\x12N\n\x0bSubmitGuess\x12 .guessinggame.SubmitGuessRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\rValidateGuess\x12\".guessinggame.ValidateGuessRequest\x1a\x1d.guessinggame.CommandResponse\x12`\n\x14PassGuessOpportunity\x12).guessinggame.PassGuessOpportunityRequest\x1a\x1d.guessinggame.CommandResponse\x12^\n\x13RequestHintExchange\x12(.guessinggame.RequestHintExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12^\n\x13RespondHintExchange\x12(.guessinggame.RespondHintExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\rSpyOnExchange\x12\".guessinggame.SpyOnExchangeRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\x15SubscribeToGameEvents\x12\x1e.guessinggame.SubscribeRequest\x1a\x17.guessinggame.GameEvent0\x01\x32\xb5\x01\n\x0b\x43hatService\x12R\n\x0fSendChatMessage\x12 .guessinggame.ChatMessageRequest\x1a\x1d.guessinggame.CommandResponse\x12R\n\x15SubscribeToChatEvents\x12\x1e.guessinggame.SubscribeRequest\x1a\x17.guessinggame.ChatEvent0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'game_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_GAMEEVENTTYPE']._serialized_start=1478
-  _globals['_GAMEEVENTTYPE']._serialized_end=1860
-  _globals['_TURNPHASE']._serialized_start=1862
-  _globals['_TURNPHASE']._serialized_end=1950
+  _globals['_GAMEEVENTTYPE']._serialized_start=1807
+  _globals['_GAMEEVENTTYPE']._serialized_end=2232
+  _globals['_TURNPHASE']._serialized_start=2234
+  _globals['_TURNPHASE']._serialized_end=2322
   _globals['_PLAYER']._serialized_start=28
   _globals['_PLAYER']._serialized_end=69
   _globals['_JOINGAMEREQUEST']._serialized_start=71
@@ -46,29 +46,31 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_COMMANDRESPONSE']._serialized_start=262
   _globals['_COMMANDRESPONSE']._serialized_end=313
   _globals['_GAMEEVENT']._serialized_start=316
-  _globals['_GAMEEVENT']._serialized_end=672
-  _globals['_STARTGAMEREQUEST']._serialized_start=674
-  _globals['_STARTGAMEREQUEST']._serialized_end=711
-  _globals['_SENDPUBLICHINTREQUEST']._serialized_start=713
-  _globals['_SENDPUBLICHINTREQUEST']._serialized_end=769
-  _globals['_SUBMITGUESSREQUEST']._serialized_start=771
-  _globals['_SUBMITGUESSREQUEST']._serialized_end=858
-  _globals['_PASSGUESSOPPORTUNITYREQUEST']._serialized_start=860
-  _globals['_PASSGUESSOPPORTUNITYREQUEST']._serialized_end=908
-  _globals['_VALIDATEGUESSREQUEST']._serialized_start=910
-  _globals['_VALIDATEGUESSREQUEST']._serialized_end=1002
-  _globals['_REQUESTHINTEXCHANGEREQUEST']._serialized_start=1004
-  _globals['_REQUESTHINTEXCHANGEREQUEST']._serialized_end=1109
-  _globals['_RESPONDHINTEXCHANGEREQUEST']._serialized_start=1111
-  _globals['_RESPONDHINTEXCHANGEREQUEST']._serialized_end=1237
-  _globals['_SPYONEXCHANGEREQUEST']._serialized_start=1239
-  _globals['_SPYONEXCHANGEREQUEST']._serialized_end=1326
-  _globals['_CHATMESSAGEREQUEST']._serialized_start=1328
-  _globals['_CHATMESSAGEREQUEST']._serialized_end=1381
-  _globals['_CHATEVENT']._serialized_start=1383
-  _globals['_CHATEVENT']._serialized_end=1475
-  _globals['_GAMESERVICE']._serialized_start=1953
-  _globals['_GAMESERVICE']._serialized_end=2825
-  _globals['_CHATSERVICE']._serialized_start=2828
-  _globals['_CHATSERVICE']._serialized_end=3009
+  _globals['_GAMEEVENT']._serialized_end=913
+  _globals['_PLAYERSCORE']._serialized_start=915
+  _globals['_PLAYERSCORE']._serialized_end=983
+  _globals['_STARTGAMEREQUEST']._serialized_start=985
+  _globals['_STARTGAMEREQUEST']._serialized_end=1022
+  _globals['_SENDPUBLICHINTREQUEST']._serialized_start=1024
+  _globals['_SENDPUBLICHINTREQUEST']._serialized_end=1080
+  _globals['_SUBMITGUESSREQUEST']._serialized_start=1082
+  _globals['_SUBMITGUESSREQUEST']._serialized_end=1169
+  _globals['_PASSGUESSOPPORTUNITYREQUEST']._serialized_start=1171
+  _globals['_PASSGUESSOPPORTUNITYREQUEST']._serialized_end=1219
+  _globals['_VALIDATEGUESSREQUEST']._serialized_start=1221
+  _globals['_VALIDATEGUESSREQUEST']._serialized_end=1331
+  _globals['_REQUESTHINTEXCHANGEREQUEST']._serialized_start=1333
+  _globals['_REQUESTHINTEXCHANGEREQUEST']._serialized_end=1438
+  _globals['_RESPONDHINTEXCHANGEREQUEST']._serialized_start=1440
+  _globals['_RESPONDHINTEXCHANGEREQUEST']._serialized_end=1566
+  _globals['_SPYONEXCHANGEREQUEST']._serialized_start=1568
+  _globals['_SPYONEXCHANGEREQUEST']._serialized_end=1655
+  _globals['_CHATMESSAGEREQUEST']._serialized_start=1657
+  _globals['_CHATMESSAGEREQUEST']._serialized_end=1710
+  _globals['_CHATEVENT']._serialized_start=1712
+  _globals['_CHATEVENT']._serialized_end=1804
+  _globals['_GAMESERVICE']._serialized_start=2325
+  _globals['_GAMESERVICE']._serialized_end=3197
+  _globals['_CHATSERVICE']._serialized_start=3200
+  _globals['_CHATSERVICE']._serialized_end=3381
 # @@protoc_insertion_point(module_scope)

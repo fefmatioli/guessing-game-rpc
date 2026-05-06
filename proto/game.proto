@@ -39,6 +39,8 @@ enum GameEventType {
   GUESS_PHASE_STARTED = 13;
   GUESS_OPPORTUNITY_PASSED = 14;
   HINT_PHASE_STARTED = 15;
+  ROUND_STARTED = 16;
+  CHARACTER_ASSIGNED = 17;
 }
 
 enum TurnPhase {
@@ -86,6 +88,22 @@ message GameEvent {
   string public_hint = 10;
   TurnPhase turn_phase = 11;
   repeated Player players = 12;
+  string guess_id = 13;
+  string guess_text = 14;
+  string guesser_player_name = 15;
+  string owner_player_name = 16;
+  bool accepted = 17;
+  repeated PlayerScore scores = 18;
+  string category_id = 19;
+  string category_name = 20;
+  string character_id = 21;
+  string image_path = 22;
+}
+
+message PlayerScore {
+  string player_id = 1;
+  string player_name = 2;
+  int32 score = 3;
 }
 
 message StartGameRequest {
@@ -111,6 +129,7 @@ message ValidateGuessRequest {
   string owner_player_id = 1;
   string guesser_player_id = 2;
   bool accepted = 3;
+  string guess_id = 4;
 }
 
 message RequestHintExchangeRequest {

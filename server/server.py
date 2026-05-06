@@ -74,36 +74,49 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                 message="Jogador nao encontrado.",
             )
 
-        success, message, assignments, current_turn = self._state.start_game()
+        success, message, category, assignments, current_turn = self._state.start_game()
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
 
-        theme = self._state.get_theme()
         started_event = game_pb2.GameEvent(
             type=game_pb2.GAME_STARTED,
-            message=f"{player.name} iniciou a partida. Tema: {theme}.",
+            message=f"{player.name} iniciou a partida.",
             actor_player_id=player.player_id,
-            theme=theme,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(started_event)
+        round_event = game_pb2.GameEvent(
+            type=game_pb2.ROUND_STARTED,
+            message=f"Categoria da rodada: {category.name}.",
+            category_id=category.category_id,
+            category_name=category.name,
+            theme=category.name,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        self._state.publish_game_event(round_event)
 
-        for assigned_player, object_name in assignments:
+        for assignment in assignments:
             private_event = game_pb2.GameEvent(
-                type=game_pb2.OBJECT_ASSIGNED,
-                message=f"Seu objeto secreto e: {object_name}.",
-                target_player_id=assigned_player.player_id,
-                object_name=object_name,
-                theme=theme,
+                type=game_pb2.CHARACTER_ASSIGNED,
+                message="Voce recebeu seu personagem secreto.",
+                target_player_id=assignment.player.player_id,
+                category_id=category.category_id,
+                category_name=category.name,
+                character_id=assignment.character.character_id,
+                image_path=assignment.character.image_path,
+                theme=category.name,
                 timestamp_unix_ms=now_unix_ms(),
             )
             self._state.publish_game_event_to_player(
-                assigned_player.player_id,
+                assignment.player.player_id,
                 private_event,
             )
 
         if current_turn is not None:
-            self._publish_turn_started(current_turn)
+            if current_turn.phase == TurnPhase.HINT:
+                self._publish_hint_phase_started(current_turn)
+            else:
+                self._publish_turn_started(current_turn)
 
         print(f"[GAME] {started_event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
@@ -130,8 +143,13 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         )
         self._state.publish_game_event(hint_event)
 
-        if current_turn is not None:
+        if waiting_players and current_turn is not None:
             self._publish_guess_phase_started(current_turn, waiting_players)
+        elif current_turn is not None:
+            if current_turn.phase == TurnPhase.HINT:
+                self._publish_hint_phase_started(current_turn)
+            else:
+                self._publish_turn_started(current_turn)
 
         print(f"[GAME] {hint_event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
@@ -146,19 +164,36 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             return game_pb2.CommandResponse(success=False, message=message)
 
         event = game_pb2.GameEvent(
-            type=game_pb2.GUESS_SUBMITTED,
+            type=game_pb2.GUESS_VALIDATED,
             message=(
-                f"{result.guesser.name} tentou adivinhar o objeto "
-                f"de {result.owner.name}: {result.guess}"
+                f"{result.guesser.name} tentou adivinhar o personagem de "
+                f"{result.owner.name}: {result.guess}. "
+                f"Resultado: {'correto' if result.accepted else 'incorreto'}."
             ),
             actor_player_id=result.guesser.player_id,
             target_player_id=result.owner.player_id,
+            guess_id=result.guess_id,
+            guess_text=result.guess,
+            guesser_player_name=result.guesser.name,
+            owner_player_name=result.owner.name,
+            accepted=result.accepted,
+            scores=self._scores_to_proto(result.scores),
             current_turn_player_id=result.owner.player_id,
             current_turn_player_name=result.owner.name,
             turn_phase=game_pb2.TURN_PHASE_UNKNOWN,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(event)
+
+        if result.accepted:
+            score_event = game_pb2.GameEvent(
+                type=game_pb2.SCORE_UPDATED,
+                message=f"{result.guesser.name} ganhou 10 pontos.",
+                actor_player_id=result.guesser.player_id,
+                scores=self._scores_to_proto(result.scores),
+                timestamp_unix_ms=now_unix_ms(),
+            )
+            self._state.publish_game_event(score_event)
 
         if result.next_turn is not None:
             if result.next_turn.phase == TurnPhase.HINT:
@@ -170,7 +205,10 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         return game_pb2.CommandResponse(success=True, message=message)
 
     def ValidateGuess(self, request, context):
-        return self._not_implemented_yet("ValidateGuess")
+        return game_pb2.CommandResponse(
+            success=False,
+            message="A validacao e automatica pelo servidor em SubmitGuess.",
+        )
 
     def PassGuessOpportunity(self, request, context):
         success, message, player, next_turn = self._state.pass_guess_opportunity(
@@ -215,10 +253,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
     def _publish_turn_started(self, turn) -> None:
         event = game_pb2.GameEvent(
             type=game_pb2.TURN_STARTED,
-            message=(
-                f"Rodada {turn.round_number}: turno de {turn.player.name}. "
-                "Ele pode tentar adivinhar alguem ou passar."
-            ),
+            message=self._turn_started_message(turn),
             actor_player_id=turn.player.player_id,
             current_turn_player_id=turn.player.player_id,
             current_turn_player_name=turn.player.name,
@@ -227,6 +262,17 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         )
         self._state.publish_game_event(event)
         print(f"[GAME] {event.message}")
+
+    @staticmethod
+    def _turn_started_message(turn) -> str:
+        if turn.phase == TurnPhase.PRE_HINT_GUESS:
+            return (
+                f"Rodada {turn.round_number}: turno de {turn.player.name}. "
+                "Ele pode fazer um palpite ou seguir para a dica."
+            )
+        if turn.phase == TurnPhase.HINT:
+            return f"Rodada {turn.round_number}: {turn.player.name} deve dar uma dica."
+        return f"Rodada {turn.round_number}: turno de {turn.player.name}."
 
     def _publish_hint_phase_started(self, turn) -> None:
         event = game_pb2.GameEvent(
@@ -245,7 +291,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         event = game_pb2.GameEvent(
             type=game_pb2.GUESS_PHASE_STARTED,
             message=(
-                f"Todos podem tentar adivinhar o objeto de {turn.player.name} "
+                f"Todos podem tentar adivinhar o personagem de {turn.player.name} "
                 "ou passar."
             ),
             actor_player_id=turn.player.player_id,
@@ -260,20 +306,35 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         print(f"[GAME] {event.message}")
 
     def _enqueue_snapshot_for_player(self, player_id: str, subscriber_queue) -> None:
-        game_started, object_name, theme, current_turn, players = (
+        game_started, category, character, current_turn, players = (
             self._state.get_game_snapshot_for_player(player_id)
         )
         if not game_started:
             return
 
-        if object_name:
+        if category is not None:
             subscriber_queue.put(
                 game_pb2.GameEvent(
-                    type=game_pb2.OBJECT_ASSIGNED,
-                    message=f"Seu objeto secreto e: {object_name}.",
+                    type=game_pb2.ROUND_STARTED,
+                    message=f"Categoria da rodada: {category.name}.",
+                    category_id=category.category_id,
+                    category_name=category.name,
+                    theme=category.name,
+                    timestamp_unix_ms=now_unix_ms(),
+                )
+            )
+
+        if category is not None and character is not None:
+            subscriber_queue.put(
+                game_pb2.GameEvent(
+                    type=game_pb2.CHARACTER_ASSIGNED,
+                    message="Voce recebeu seu personagem secreto.",
                     target_player_id=player_id,
-                    object_name=object_name,
-                    theme=theme,
+                    category_id=category.category_id,
+                    category_name=category.name,
+                    character_id=character.character_id,
+                    image_path=character.image_path,
+                    theme=category.name,
                     timestamp_unix_ms=now_unix_ms(),
                 )
             )
@@ -310,6 +371,21 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         return [
             game_pb2.Player(player_id=player.player_id, name=player.name)
             for player in players
+        ]
+
+    def _scores_to_proto(self, scores):
+        players_by_id = {
+            player.player_id: player
+            for player in self._state.get_players()
+        }
+        return [
+            game_pb2.PlayerScore(
+                player_id=player_id,
+                player_name=players_by_id[player_id].name,
+                score=score,
+            )
+            for player_id, score in scores.items()
+            if player_id in players_by_id
         ]
 
 

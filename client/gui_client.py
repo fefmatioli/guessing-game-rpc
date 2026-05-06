@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import os
 import threading
 import tkinter.simpledialog as simpledialog
 
 import customtkinter as ctk
 import grpc
+from PIL import Image
 
 from grpc_client import GameRpcClient, game_pb2
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class GuessingGameApp(ctk.CTk):
@@ -22,11 +27,16 @@ class GuessingGameApp(ctk.CTk):
 
         self.rpc_client: GameRpcClient | None = None
         self.stream_threads_started = False
-        self.secret_object = "Aguardando inicio"
+        self.category_name = "Aguardando inicio"
+        self.character_image_path = ""
+        self.character_image = None
         self.current_turn = "Aguardando inicio"
         self.current_turn_player_id = ""
         self.turn_phase = game_pb2.TURN_PHASE_UNKNOWN
         self.players_by_name: dict[str, str] = {}
+        self.game_started = False
+        self.choosing_guess = False
+        self.responded_this_opportunity = False
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -63,7 +73,7 @@ class GuessingGameApp(ctk.CTk):
     def _build_player_panel(self) -> None:
         self.player_frame = ctk.CTkFrame(self, corner_radius=8)
         self.player_frame.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=8)
-        self.player_frame.grid_rowconfigure(5, weight=1)
+        self.player_frame.grid_rowconfigure(7, weight=1)
 
         ctk.CTkLabel(
             self.player_frame,
@@ -74,14 +84,23 @@ class GuessingGameApp(ctk.CTk):
         self.status_label = ctk.CTkLabel(self.player_frame, text="Desconectado")
         self.status_label.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 10))
 
-        self.object_label = ctk.CTkLabel(
+        self.category_label = ctk.CTkLabel(
             self.player_frame,
-            text="Objeto: aguardando",
+            text="Categoria: aguardando",
             anchor="w",
             justify="left",
             wraplength=210,
         )
-        self.object_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.category_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+
+        self.character_label = ctk.CTkLabel(
+            self.player_frame,
+            text="Imagem: aguardando",
+            width=210,
+            height=150,
+            anchor="center",
+        )
+        self.character_label.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
 
         self.turn_label = ctk.CTkLabel(
             self.player_frame,
@@ -90,71 +109,87 @@ class GuessingGameApp(ctk.CTk):
             justify="left",
             wraplength=210,
         )
-        self.turn_label.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
+        self.turn_label.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 12))
 
         self.start_button = ctk.CTkButton(
             self.player_frame, text="Iniciar jogo", command=self.start_game
         )
-        self.start_button.grid(row=4, column=0, sticky="ew", padx=14, pady=(4, 8))
+        self.start_button.grid(row=5, column=0, sticky="ew", padx=14, pady=(4, 8))
+
+        self.action_frame = ctk.CTkFrame(self.player_frame, fg_color="transparent")
+        self.action_frame.grid(row=6, column=0, sticky="ew", padx=14, pady=(18, 8))
+        self.action_frame.grid_columnconfigure(0, weight=1)
 
         self.action_label = ctk.CTkLabel(
-            self.player_frame,
+            self.action_frame,
             text="Acoes: entre na partida",
             anchor="w",
             justify="left",
             wraplength=210,
         )
-        self.action_label.grid(row=5, column=0, sticky="ew", padx=14, pady=(8, 4))
+        self.action_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
         self.target_var = ctk.StringVar(value="Selecione jogador")
+        self.make_guess_button = ctk.CTkButton(
+            self.action_frame, text="Fazer palpite", command=self.start_guess_choice
+        )
+        self.make_guess_button.grid(row=1, column=0, sticky="ew", pady=6)
+
+        self.no_guess_button = ctk.CTkButton(
+            self.action_frame,
+            text="Nao fazer palpite",
+            command=self.pass_guess_opportunity,
+        )
+        self.no_guess_button.grid(row=2, column=0, sticky="ew", pady=6)
+
         self.target_menu = ctk.CTkOptionMenu(
-            self.player_frame,
+            self.action_frame,
             variable=self.target_var,
             values=["Selecione jogador"],
         )
-        self.target_menu.grid(row=6, column=0, sticky="ew", padx=14, pady=8)
+        self.target_menu.grid(row=1, column=0, sticky="ew", pady=6)
 
         self.guess_entry = ctk.CTkEntry(
-            self.player_frame,
+            self.action_frame,
             placeholder_text="Palpite",
         )
-        self.guess_entry.grid(row=7, column=0, sticky="ew", padx=14, pady=8)
+        self.guess_entry.grid(row=2, column=0, sticky="ew", pady=6)
 
         self.guess_button = ctk.CTkButton(
-            self.player_frame, text="Enviar palpite", command=self.submit_guess
+            self.action_frame, text="Enviar palpite", command=self.submit_guess
         )
-        self.guess_button.grid(row=8, column=0, sticky="ew", padx=14, pady=8)
+        self.guess_button.grid(row=3, column=0, sticky="ew", pady=6)
 
         self.pass_button = ctk.CTkButton(
-            self.player_frame, text="Passar", command=self.pass_guess_opportunity
+            self.action_frame, text="Passar", command=self.pass_guess_opportunity
         )
-        self.pass_button.grid(row=9, column=0, sticky="ew", padx=14, pady=8)
+        self.pass_button.grid(row=4, column=0, sticky="ew", pady=6)
 
         self.hint_button = ctk.CTkButton(
-            self.player_frame, text="Enviar dica publica", command=self.send_public_hint
+            self.action_frame, text="Enviar dica publica", command=self.send_public_hint
         )
-        self.hint_button.grid(row=10, column=0, sticky="ew", padx=14, pady=8)
+        self.hint_button.grid(row=5, column=0, sticky="ew", pady=6)
 
         self.exchange_button = ctk.CTkButton(
-            self.player_frame,
+            self.action_frame,
             text="Solicitar troca privada",
             command=self.request_hint_exchange,
         )
-        self.exchange_button.grid(row=11, column=0, sticky="new", padx=14, pady=8)
+        self.exchange_button.grid(row=9, column=0, sticky="ew", pady=6)
 
         self.spy_button = ctk.CTkButton(
-            self.player_frame, text="Tentar espionar", command=self.spy_on_exchange
+            self.action_frame, text="Tentar espionar", command=self.spy_on_exchange
         )
-        self.spy_button.grid(row=12, column=0, sticky="ew", padx=14, pady=8)
+        self.spy_button.grid(row=10, column=0, sticky="ew", pady=6)
 
         ctk.CTkLabel(
             self.player_frame,
             text="Jogadores conectados",
             font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=13, column=0, sticky="w", padx=14, pady=(18, 6))
+        ).grid(row=7, column=0, sticky="w", padx=14, pady=(18, 6))
 
         self.players_box = ctk.CTkTextbox(self.player_frame, height=120)
-        self.players_box.grid(row=14, column=0, sticky="ew", padx=14, pady=(0, 14))
+        self.players_box.grid(row=8, column=0, sticky="ew", padx=14, pady=(0, 14))
         self.players_box.configure(state="disabled")
 
     def _build_events_panel(self) -> None:
@@ -281,16 +316,28 @@ class GuessingGameApp(ctk.CTk):
             self._append_event("Digite o palpite antes de enviar.")
             return
         self.guess_entry.delete(0, "end")
-        self._run_command(
+        sent = self._run_command(
             "SubmitGuess",
             lambda: self.rpc_client.submit_guess(owner_id, guess),
         )
+        if sent:
+            self.responded_this_opportunity = True
+            self.choosing_guess = False
+            self._update_action_state()
 
     def pass_guess_opportunity(self) -> None:
-        self._run_command(
+        sent = self._run_command(
             "PassGuessOpportunity",
             lambda: self.rpc_client.pass_guess_opportunity(),
         )
+        if sent:
+            self.responded_this_opportunity = True
+            self.choosing_guess = False
+            self._update_action_state()
+
+    def start_guess_choice(self) -> None:
+        self.choosing_guess = True
+        self._update_action_state()
 
     def request_hint_exchange(self) -> None:
         target_id = self._ask_text("Troca privada", "ID do jogador alvo:")
@@ -329,19 +376,21 @@ class GuessingGameApp(ctk.CTk):
     def _run_command(self, label: str, command, show_success: bool = True) -> None:
         if self.rpc_client is None:
             self._append_event("Entre na partida antes de enviar comandos.")
-            return
+            return False
 
         try:
             response = command()
         except grpc.RpcError as error:
             self._append_event(f"{label}: erro RPC: {error.details()}")
-            return
+            return False
 
         if response.success:
             if show_success:
                 self._append_event(f"{label}: {response.message}")
+            return True
         else:
             self._append_event(f"{label}: {response.message}")
+            return False
 
     def _ask_text(self, title: str, prompt: str) -> str:
         value = simpledialog.askstring(title, prompt, parent=self)
@@ -352,15 +401,23 @@ class GuessingGameApp(ctk.CTk):
             self._set_players(list(event.players))
 
         if event.type == game_pb2.GAME_STARTED:
-            self.start_button.configure(state="disabled")
-        if event.type == game_pb2.OBJECT_ASSIGNED:
-            self.secret_object = event.object_name
-            self.object_label.configure(text=f"Objeto: {event.object_name}")
+            self.game_started = True
+        if event.type == game_pb2.ROUND_STARTED:
+            self.game_started = True
+            self.category_name = event.category_name
+            self.category_label.configure(text=f"Categoria: {event.category_name}")
+        if event.type == game_pb2.CHARACTER_ASSIGNED:
+            self.game_started = True
+            self.character_image_path = event.image_path
+            self._load_character_image(event.image_path)
         elif event.type in {
             game_pb2.TURN_STARTED,
             game_pb2.HINT_PHASE_STARTED,
             game_pb2.GUESS_PHASE_STARTED,
         }:
+            self.choosing_guess = False
+            self.responded_this_opportunity = False
+            self.game_started = True
             self.current_turn = event.current_turn_player_name
             self.current_turn_player_id = event.current_turn_player_id
             self.turn_phase = event.turn_phase
@@ -372,9 +429,10 @@ class GuessingGameApp(ctk.CTk):
             self.turn_label.configure(
                 text=f"Turno: {event.current_turn_player_name}{suffix}"
             )
-
         self._update_action_state()
         self._append_event(event.message)
+        if event.scores:
+            self._append_event(self._format_scores(event.scores))
 
     def _append_event(self, text: str) -> None:
         self._append_to_textbox(self.events_box, text)
@@ -416,7 +474,6 @@ class GuessingGameApp(ctk.CTk):
 
         self.name_entry.configure(state=login_state)
         self.join_button.configure(state=login_state)
-        self.start_button.configure(state=command_state)
         self.chat_entry.configure(state=command_state)
         self.chat_button.configure(state=command_state)
         self._update_action_state()
@@ -444,19 +501,23 @@ class GuessingGameApp(ctk.CTk):
 
     def _update_action_state(self) -> None:
         connected = self.rpc_client is not None and bool(self.rpc_client.player_id)
+        self._hide_action_widgets()
+
         if not connected:
-            for widget in [
-                self.target_menu,
-                self.guess_entry,
-                self.guess_button,
-                self.pass_button,
-                self.hint_button,
-                self.exchange_button,
-                self.spy_button,
-            ]:
-                widget.configure(state="disabled")
-                widget.grid_remove()
+            self.start_button.configure(state="disabled")
+            self.action_label.configure(text="Acoes: entre na partida.")
             return
+
+        if not self.game_started:
+            self.start_button.grid()
+            self.start_button.configure(state="normal")
+            self.action_label.configure(
+                text="Acoes: aguarde os jogadores e inicie a partida."
+            )
+            return
+
+        self.start_button.configure(state="disabled")
+        self.start_button.grid_remove()
 
         is_my_turn = self.current_turn_player_id == self.rpc_client.player_id
         can_pre_hint_guess = self.turn_phase == game_pb2.PRE_HINT_GUESS and is_my_turn
@@ -464,39 +525,98 @@ class GuessingGameApp(ctk.CTk):
         can_post_hint_guess = (
             self.turn_phase == game_pb2.POST_HINT_GUESSES and not is_my_turn
         )
-        can_guess_or_pass = can_pre_hint_guess or can_post_hint_guess
+        can_choose_guess = (
+            can_pre_hint_guess or can_post_hint_guess
+        ) and not self.responded_this_opportunity
 
-        self._show_action_widget(self.target_menu, can_pre_hint_guess)
-        self._show_action_widget(self.guess_entry, can_guess_or_pass)
-        self._show_action_widget(self.guess_button, can_guess_or_pass)
-        self._show_action_widget(self.pass_button, can_guess_or_pass)
-        self._show_action_widget(self.hint_button, can_hint)
-        self.exchange_button.configure(state="disabled")
-        self.spy_button.configure(state="disabled")
-        self.exchange_button.grid_remove()
-        self.spy_button.grid_remove()
-
-        if can_pre_hint_guess:
+        if can_pre_hint_guess and not self.choosing_guess:
             self.action_label.configure(
-                text="Acao: tente adivinhar outro jogador ou passe."
+                text="Acao: voce pode fazer um palpite antes da dica."
             )
+            self._show_action_widget(self.make_guess_button, row=1)
+            self._show_action_widget(self.no_guess_button, row=2)
+        elif can_pre_hint_guess and self.choosing_guess:
+            self.action_label.configure(
+                text="Acao: escolha um jogador e envie um palpite."
+            )
+            self._show_action_widget(self.target_menu, row=1)
+            self._show_action_widget(self.guess_entry, row=2)
+            self._show_action_widget(self.guess_button, row=3)
+            self._show_action_widget(self.pass_button, row=4)
         elif can_hint:
             self.action_label.configure(text="Acao: envie sua dica publica.")
-        elif can_post_hint_guess:
+            self._show_action_widget(self.hint_button, row=1)
+        elif can_post_hint_guess and can_choose_guess and not self.choosing_guess:
             self.action_label.configure(
-                text=f"Acao: adivinhe o objeto de {self.current_turn} ou passe."
+                text=f"Acao: quer tentar adivinhar o personagem de {self.current_turn}?"
+            )
+            self._show_action_widget(self.make_guess_button, row=1)
+            self._show_action_widget(self.no_guess_button, row=2)
+        elif can_post_hint_guess and can_choose_guess and self.choosing_guess:
+            self.action_label.configure(
+                text=f"Acao: digite seu palpite para {self.current_turn}."
+            )
+            self._show_action_widget(self.guess_entry, row=1)
+            self._show_action_widget(self.guess_button, row=2)
+            self._show_action_widget(self.pass_button, row=3)
+        elif self.responded_this_opportunity:
+            self.action_label.configure(
+                text="Acao: voce ja respondeu esta oportunidade."
             )
         else:
             self.action_label.configure(text="Acao: aguarde os outros jogadores.")
 
-    @staticmethod
-    def _show_action_widget(widget, visible: bool) -> None:
-        if visible:
-            widget.grid()
-            widget.configure(state="normal")
-        else:
-            widget.configure(state="disabled")
+    def _hide_action_widgets(self) -> None:
+        for widget in [
+            self.make_guess_button,
+            self.no_guess_button,
+            self.target_menu,
+            self.guess_entry,
+            self.guess_button,
+            self.pass_button,
+            self.hint_button,
+            self.exchange_button,
+            self.spy_button,
+        ]:
+            try:
+                widget.configure(state="disabled")
+            except ValueError:
+                pass
             widget.grid_remove()
+
+    @staticmethod
+    def _show_action_widget(widget, row: int) -> None:
+        widget.grid(row=row, column=0, sticky="ew", pady=6)
+        try:
+            widget.configure(state="normal")
+        except ValueError:
+            pass
+
+    @staticmethod
+    def _format_scores(scores) -> str:
+        ordered_scores = sorted(scores, key=lambda item: item.score, reverse=True)
+        score_text = ", ".join(
+            f"{item.player_name}: {item.score}" for item in ordered_scores
+        )
+        return f"Placar: {score_text}"
+
+    def _load_character_image(self, image_path: str) -> None:
+        absolute_path = os.path.join(PROJECT_ROOT, image_path)
+        if not os.path.exists(absolute_path):
+            self.character_image = None
+            self.character_label.configure(
+                image=None,
+                text=f"Imagem nao encontrada:\n{image_path}",
+            )
+            return
+
+        image = Image.open(absolute_path)
+        self.character_image = ctk.CTkImage(
+            light_image=image,
+            dark_image=image,
+            size=(180, 150),
+        )
+        self.character_label.configure(image=self.character_image, text="")
 
     def _on_close(self) -> None:
         if self.rpc_client is not None:

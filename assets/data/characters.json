@@ -1,0 +1,96 @@
+{
+  "categories": [
+    {
+      "id": "lotr",
+      "name": "Lord of the Rings",
+      "characters": [
+        {"id": "gandalf", "name": "Gandalf", "image": "assets/characters/lotr/gandalf.png", "accepted_answers": ["gandalf", "mithrandir"]},
+        {"id": "frodo", "name": "Frodo", "image": "assets/characters/lotr/frodo.png", "accepted_answers": ["frodo", "frodo baggins"]},
+        {"id": "aragorn", "name": "Aragorn", "image": "assets/characters/lotr/aragorn.png", "accepted_answers": ["aragorn", "strider", "passolargo"]},
+        {"id": "legolas", "name": "Legolas", "image": "assets/characters/lotr/legolas.png", "accepted_answers": ["legolas"]},
+        {"id": "gimli", "name": "Gimli", "image": "assets/characters/lotr/gimli.png", "accepted_answers": ["gimli"]},
+        {"id": "sauron", "name": "Sauron", "image": "assets/characters/lotr/sauron.png", "accepted_answers": ["sauron"]},
+        {"id": "gollum", "name": "Gollum", "image": "assets/characters/lotr/gollum.png", "accepted_answers": ["gollum", "smeagol", "sméagol"]},
+        {"id": "saruman", "name": "Saruman", "image": "assets/characters/lotr/saruman.png", "accepted_answers": ["saruman"]}
+      ]
+    },
+    {
+      "id": "starwars",
+      "name": "Star Wars",
+      "characters": [
+        {"id": "darth_vader", "name": "Darth Vader", "image": "assets/characters/starwars/darth_vader.png", "accepted_answers": ["darth vader", "vader", "anakin skywalker"]},
+        {"id": "luke_skywalker", "name": "Luke Skywalker", "image": "assets/characters/starwars/luke_skywalker.png", "accepted_answers": ["luke skywalker", "luke"]},
+        {"id": "leia_organa", "name": "Leia Organa", "image": "assets/characters/starwars/leia_organa.png", "accepted_answers": ["leia organa", "leia", "princesa leia"]},
+        {"id": "yoda", "name": "Yoda", "image": "assets/characters/starwars/yoda.png", "accepted_answers": ["yoda"]},
+        {"id": "obi_wan_kenobi", "name": "Obi-Wan Kenobi", "image": "assets/characters/starwars/obi_wan_kenobi.png", "accepted_answers": ["obi-wan kenobi", "obi wan", "kenobi"]},
+        {"id": "han_solo", "name": "Han Solo", "image": "assets/characters/starwars/han_solo.png", "accepted_answers": ["han solo", "han"]},
+        {"id": "chewbacca", "name": "Chewbacca", "image": "assets/characters/starwars/chewbacca.png", "accepted_answers": ["chewbacca", "chewie"]},
+        {"id": "palpatine", "name": "Palpatine", "image": "assets/characters/starwars/palpatine.png", "accepted_answers": ["palpatine", "darth sidious", "sidious"]}
+      ]
+    },
+    {
+      "id": "dc",
+      "name": "DC",
+      "characters": [
+        {"id": "batman", "name": "Batman", "image": "assets/characters/dc/batman.png", "accepted_answers": ["batman", "homem morcego", "bruce wayne"]},
+        {"id": "superman", "name": "Superman", "image": "assets/characters/dc/superman.png", "accepted_answers": ["superman", "clark kent"]},
+        {"id": "wonder_woman", "name": "Wonder Woman", "image": "assets/characters/dc/wonder_woman.png", "accepted_answers": ["wonder woman", "mulher maravilha", "diana prince"]},
+        {"id": "the_flash", "name": "The Flash", "image": "assets/characters/dc/the_flash.png", "accepted_answers": ["the flash", "flash", "barry allen"]},
+        {"id": "aquaman", "name": "Aquaman", "image": "assets/characters/dc/aquaman.png", "accepted_answers": ["aquaman", "arthur curry"]},
+        {"id": "green_lantern", "name": "Green Lantern", "image": "assets/characters/dc/green_lantern.png", "accepted_answers": ["green lantern", "lanterna verde", "hal jordan"]},
+        {"id": "joker", "name": "Joker", "image": "assets/characters/dc/joker.png", "accepted_answers": ["joker", "coringa"]},
+        {"id": "harley_quinn", "name": "Harley Quinn", "image": "assets/characters/dc/harley_quinn.png", "accepted_answers": ["harley quinn", "arlequina"]}
+      ]
+    },
+    {
+      "id": "rpg",
+      "name": "RPG",
+      "characters": [
+        {"id": "mago", "name": "Mago", "image": "assets/characters/rpg/mago.png", "accepted_answers": ["mago", "wizard"]},
+        {"id": "guerreiro", "name": "Guerreiro", "image": "assets/characters/rpg/guerreiro.png", "accepted_answers": ["guerreiro", "warrior"]},
+        {"id": "ladino", "name": "Ladino", "image": "assets/characters/rpg/ladino.png", "accepted_answers": ["ladino", "rogue"]},
+        {"id": "clerigo", "name": "Clérigo", "image": "assets/characters/rpg/clerigo.png", "accepted_answers": ["clerigo", "clérigo", "cleric"]},
+        {"id": "bardo", "name": "Bardo", "image": "assets/characters/rpg/bardo.png", "accepted_answers": ["bardo", "bard"]},
+        {"id": "druida", "name": "Druida", "image": "assets/characters/rpg/druida.png", "accepted_answers": ["druida", "druid"]},
+        {"id": "necromante", "name": "Necromante", "image": "assets/characters/rpg/necromante.png", "accepted_answers": ["necromante", "necromancer"]},
+        {"id": "paladino", "name": "Paladino", "image": "assets/characters/rpg/paladino.png", "accepted_answers": ["paladino", "paladin"]},
+        {"id": "dragao", "name": "Dragão", "image": "assets/characters/rpg/dragao.png", "accepted_answers": ["dragao", "dragão", "dragon"]},
+        {"id": "goblin", "name": "Goblin", "image": "assets/characters/rpg/goblin.png", "accepted_answers": ["goblin"]},
+        {"id": "elfo", "name": "Elfo", "image": "assets/characters/rpg/elfo.png", "accepted_answers": ["elfo", "elf"]},
+        {"id": "anao", "name": "Anão", "image": "assets/characters/rpg/anao.png", "accepted_answers": ["anao", "anão", "dwarf"]},
+        {"id": "tiefling", "name": "Tiefling", "image": "assets/characters/rpg/tiefling.png", "accepted_answers": ["tiefling"]},
+        {"id": "orc", "name": "Orc", "image": "assets/characters/rpg/orc.png", "accepted_answers": ["orc", "orque"]},
+        {"id": "d20", "name": "D20", "image": "assets/characters/rpg/d20.png", "accepted_answers": ["d20", "dado de vinte lados"]},
+        {"id": "mestre_do_jogo", "name": "Mestre do Jogo", "image": "assets/characters/rpg/mestre_do_jogo.png", "accepted_answers": ["mestre do jogo", "mestre", "dm", "gm"]}
+      ]
+    },
+    {
+      "id": "games",
+      "name": "Games",
+      "characters": [
+        {"id": "mario", "name": "Mario", "image": "assets/characters/games/mario.png", "accepted_answers": ["mario", "super mario"]},
+        {"id": "sonic", "name": "Sonic", "image": "assets/characters/games/sonic.png", "accepted_answers": ["sonic", "sonic the hedgehog"]},
+        {"id": "kratos", "name": "Kratos", "image": "assets/characters/games/kratos.png", "accepted_answers": ["kratos"]},
+        {"id": "master_chief", "name": "Master Chief", "image": "assets/characters/games/master_chief.png", "accepted_answers": ["master chief", "john-117", "john 117"]},
+        {"id": "link", "name": "Link", "image": "assets/characters/games/link.png", "accepted_answers": ["link"]},
+        {"id": "steve", "name": "Steve", "image": "assets/characters/games/steve.png", "accepted_answers": ["steve", "minecraft steve"]},
+        {"id": "lara_croft", "name": "Lara Croft", "image": "assets/characters/games/lara_croft.png", "accepted_answers": ["lara croft", "lara"]},
+        {"id": "pac_man", "name": "Pac-Man", "image": "assets/characters/games/pac_man.png", "accepted_answers": ["pac-man", "pac man", "pacman"]}
+      ]
+    },
+    {
+      "id": "anime",
+      "name": "Anime",
+      "characters": [
+        {"id": "goku", "name": "Goku", "image": "assets/characters/anime/goku.png", "accepted_answers": ["goku", "son goku"]},
+        {"id": "naruto", "name": "Naruto", "image": "assets/characters/anime/naruto.png", "accepted_answers": ["naruto", "naruto uzumaki"]},
+        {"id": "luffy", "name": "Luffy", "image": "assets/characters/anime/luffy.png", "accepted_answers": ["luffy", "monkey d luffy"]},
+        {"id": "gojo", "name": "Gojo", "image": "assets/characters/anime/gojo.png", "accepted_answers": ["gojo", "satoru gojo"]},
+        {"id": "levi", "name": "Levi", "image": "assets/characters/anime/levi.png", "accepted_answers": ["levi", "levi ackerman"]},
+        {"id": "itachi", "name": "Itachi", "image": "assets/characters/anime/itachi.png", "accepted_answers": ["itachi", "itachi uchiha"]},
+        {"id": "tanjiro", "name": "Tanjiro", "image": "assets/characters/anime/tanjiro.png", "accepted_answers": ["tanjiro", "tanjiro kamado"]},
+        {"id": "edward_elric", "name": "Edward Elric", "image": "assets/characters/anime/edward_elric.png", "accepted_answers": ["edward elric", "edward", "ed"]}
+      ]
+    }
+  ]
+}
