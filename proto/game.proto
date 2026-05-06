@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package guessinggame;
+
+// GameService recebe comandos da partida e publica eventos de jogo.
+service GameService {
+  rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
+  rpc StartGame(StartGameRequest) returns (CommandResponse);
+  rpc SendPublicHint(SendPublicHintRequest) returns (CommandResponse);
+  rpc SubmitGuess(SubmitGuessRequest) returns (CommandResponse);
+  rpc ValidateGuess(ValidateGuessRequest) returns (CommandResponse);
+  rpc PassGuessOpportunity(PassGuessOpportunityRequest) returns (CommandResponse);
+  rpc RequestHintExchange(RequestHintExchangeRequest) returns (CommandResponse);
+  rpc RespondHintExchange(RespondHintExchangeRequest) returns (CommandResponse);
+  rpc SpyOnExchange(SpyOnExchangeRequest) returns (CommandResponse);
+  rpc SubscribeToGameEvents(SubscribeRequest) returns (stream GameEvent);
+}
+
+// ChatService fica separado das acoes do jogo.
+service ChatService {
+  rpc SendChatMessage(ChatMessageRequest) returns (CommandResponse);
+  rpc SubscribeToChatEvents(SubscribeRequest) returns (stream ChatEvent);
+}
+
+enum GameEventType {
+  GAME_EVENT_UNKNOWN = 0;
+  PLAYER_JOINED = 1;
+  GAME_STARTED = 2;
+  PUBLIC_HINT_SENT = 3;
+  GUESS_SUBMITTED = 4;
+  GUESS_VALIDATED = 5;
+  HINT_EXCHANGE_REQUESTED = 6;
+  HINT_EXCHANGE_RESPONDED = 7;
+  HINT_EXCHANGE_OCCURRED = 8;
+  SPY_ATTEMPTED = 9;
+  SCORE_UPDATED = 10;
+  OBJECT_ASSIGNED = 11;
+  TURN_STARTED = 12;
+  GUESS_PHASE_STARTED = 13;
+  GUESS_OPPORTUNITY_PASSED = 14;
+  HINT_PHASE_STARTED = 15;
+}
+
+enum TurnPhase {
+  TURN_PHASE_UNKNOWN = 0;
+  PRE_HINT_GUESS = 1;
+  HINT = 2;
+  POST_HINT_GUESSES = 3;
+}
+
+message Player {
+  string player_id = 1;
+  string name = 2;
+}
+
+message JoinGameRequest {
+  string player_name = 1;
+}
+
+message JoinGameResponse {
+  bool success = 1;
+  string message = 2;
+  string player_id = 3;
+  repeated Player players = 4;
+}
+
+message SubscribeRequest {
+  string player_id = 1;
+}
+
+message CommandResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GameEvent {
+  GameEventType type = 1;
+  string message = 2;
+  string actor_player_id = 3;
+  string target_player_id = 4;
+  int64 timestamp_unix_ms = 5;
+  string object_name = 6;
+  string theme = 7;
+  string current_turn_player_id = 8;
+  string current_turn_player_name = 9;
+  string public_hint = 10;
+  TurnPhase turn_phase = 11;
+  repeated Player players = 12;
+}
+
+message StartGameRequest {
+  string player_id = 1;
+}
+
+message SendPublicHintRequest {
+  string player_id = 1;
+  string hint = 2;
+}
+
+message SubmitGuessRequest {
+  string guesser_player_id = 1;
+  string owner_player_id = 2;
+  string guess = 3;
+}
+
+message PassGuessOpportunityRequest {
+  string player_id = 1;
+}
+
+message ValidateGuessRequest {
+  string owner_player_id = 1;
+  string guesser_player_id = 2;
+  bool accepted = 3;
+}
+
+message RequestHintExchangeRequest {
+  string requester_player_id = 1;
+  string target_player_id = 2;
+  string private_hint = 3;
+}
+
+message RespondHintExchangeRequest {
+  string responder_player_id = 1;
+  string requester_player_id = 2;
+  bool accepted = 3;
+  string private_hint = 4;
+}
+
+message SpyOnExchangeRequest {
+  string spy_player_id = 1;
+  string player_a_id = 2;
+  string player_b_id = 3;
+}
+
+message ChatMessageRequest {
+  string player_id = 1;
+  string text = 2;
+}
+
+message ChatEvent {
+  string player_id = 1;
+  string player_name = 2;
+  string text = 3;
+  int64 timestamp_unix_ms = 4;
+}
