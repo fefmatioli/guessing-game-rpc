@@ -50,8 +50,13 @@ class GameRpcClient:
             game_pb2.ChatMessageRequest(player_id=self.player_id, text=text)
         )
 
-    def start_game(self):
-        return self.game.StartGame(game_pb2.StartGameRequest(player_id=self.player_id))
+    def start_game(self, max_guesses_per_player: int = 6):
+        return self.game.StartGame(
+            game_pb2.StartGameRequest(
+                player_id=self.player_id,
+                max_guesses_per_player=max_guesses_per_player,
+            )
+        )
 
     def send_public_hint(self, hint: str):
         return self.game.SendPublicHint(

@@ -41,6 +41,7 @@ enum GameEventType {
   HINT_PHASE_STARTED = 15;
   ROUND_STARTED = 16;
   CHARACTER_ASSIGNED = 17;
+  GAME_ENDED = 18;
 }
 
 enum TurnPhase {
@@ -98,6 +99,8 @@ message GameEvent {
   string category_name = 20;
   string character_id = 21;
   string image_path = 22;
+  int32 max_guesses_per_player = 23;
+  repeated PlayerGuesses remaining_guesses = 24;
 }
 
 message PlayerScore {
@@ -106,8 +109,15 @@ message PlayerScore {
   int32 score = 3;
 }
 
+message PlayerGuesses {
+  string player_id = 1;
+  string player_name = 2;
+  int32 guesses_left = 3;
+}
+
 message StartGameRequest {
   string player_id = 1;
+  int32 max_guesses_per_player = 2;
 }
 
 message SendPublicHintRequest {

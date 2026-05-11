@@ -44,3 +44,23 @@ Thumbs.db
 
 # Logs
 *.log
+
+# SQLite databases
+*.sqlite3
+*.db
+
+# Generated protobuf files
+generated/
+
+# Runtime/generated game assets
+*.tmp
+*.cache
+
+# Python type checker
+.pytype/
+
+# PyInstaller
+*.spec
+
+# Jupyter
+.ipynb_checkpoints/
