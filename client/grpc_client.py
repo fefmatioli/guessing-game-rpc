@@ -23,16 +23,16 @@ class GameRpcClient:
         self.chat = game_pb2_grpc.ChatServiceStub(self._channel)
         self.player_id = ""
         self.player_name = ""
+        self.room_owner_id = ""
         self.players: list[game_pb2.Player] = []
 
     def join_game(self, player_name: str):
-        response = self.game.JoinGame(
-            game_pb2.JoinGameRequest(player_name=player_name)
-        )
+        response = self.game.JoinGame(game_pb2.JoinGameRequest(player_name=player_name))
         if response.success:
             self.player_id = response.player_id
             self.player_name = player_name.strip()
             self.players = list(response.players)
+            self.room_owner_id = response.room_owner_id
         return response
 
     def subscribe_to_game_events(self):
@@ -50,11 +50,20 @@ class GameRpcClient:
             game_pb2.ChatMessageRequest(player_id=self.player_id, text=text)
         )
 
-    def start_game(self, max_guesses_per_player: int = 6):
+    def start_game(self, max_rounds: int = 3):
         return self.game.StartGame(
             game_pb2.StartGameRequest(
                 player_id=self.player_id,
-                max_guesses_per_player=max_guesses_per_player,
+                max_rounds=max_rounds,
+            )
+        )
+
+    def validate_guess(self, guess_id: str, accepted: bool):
+        return self.game.ValidateGuess(
+            game_pb2.ValidateGuessRequest(
+                owner_player_id=self.player_id,
+                guess_id=guess_id,
+                accepted=accepted,
             )
         )
 
@@ -77,11 +86,29 @@ class GameRpcClient:
             game_pb2.PassGuessOpportunityRequest(player_id=self.player_id)
         )
 
+    def vote_for_next_round(self, continue_playing: bool):
+        return self.game.VoteForNextRound(
+            game_pb2.VoteForNextRoundRequest(
+                player_id=self.player_id,
+                continue_playing=continue_playing,
+            )
+        )
+
     def request_hint_exchange(self, target_player_id: str, private_hint: str):
         return self.game.RequestHintExchange(
             game_pb2.RequestHintExchangeRequest(
                 requester_player_id=self.player_id,
                 target_player_id=target_player_id,
+                private_hint=private_hint,
+            )
+        )
+
+    def respond_hint_exchange(self, requester_player_id: str, accepted: bool, private_hint: str = ""):
+        return self.game.RespondHintExchange(
+            game_pb2.RespondHintExchangeRequest(
+                responder_player_id=self.player_id,
+                requester_player_id=requester_player_id,
+                accepted=accepted,
                 private_hint=private_hint,
             )
         )

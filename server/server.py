@@ -13,15 +13,22 @@ sys.path.insert(0, GENERATED_DIR)
 
 import game_pb2  # noqa: E402
 import game_pb2_grpc  # noqa: E402
-from game_state import GameState, TurnPhase, now_unix_ms  # noqa: E402
+from game_state import (  # noqa: E402
+    GameState, TurnPhase, RoundEndResult, ExchangeResult, now_unix_ms,
+)
+
+HINTS_PER_SESSION = 3
 
 
 class GameService(game_pb2_grpc.GameServiceServicer):
     def __init__(self, state: GameState) -> None:
         self._state = state
 
+    # ─────────────────────────── JoinGame ─────────────────────────────
+
     def JoinGame(self, request, context):
         player, players, created = self._state.add_player(request.player_name)
+        owner_id = self._state.get_room_owner_id() or ""
 
         if created:
             event = game_pb2.GameEvent(
@@ -29,6 +36,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                 message=f"{player.name} entrou na partida.",
                 actor_player_id=player.player_id,
                 players=self._players_to_proto(players),
+                room_owner_id=owner_id,
                 timestamp_unix_ms=now_unix_ms(),
             )
             self._state.publish_game_event(event)
@@ -36,29 +44,27 @@ class GameService(game_pb2_grpc.GameServiceServicer):
 
         return game_pb2.JoinGameResponse(
             success=True,
-            message="Entrada realizada com sucesso."
-            if created
-            else "Nome ja estava conectado; reutilizando jogador.",
+            message="Entrada realizada com sucesso." if created else "Nome ja conectado; reutilizando jogador.",
             player_id=player.player_id,
-            players=[
-                game_pb2.Player(player_id=item.player_id, name=item.name)
-                for item in players
-            ],
+            players=[game_pb2.Player(player_id=p.player_id, name=p.name) for p in players],
+            room_owner_id=owner_id,
         )
+
+    # ─────────────────────────── Subscribe ────────────────────────────
 
     def SubscribeToGameEvents(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
             context.abort(grpc.StatusCode.NOT_FOUND, "Jogador nao encontrado.")
 
-        subscriber_queue = self._state.add_game_subscriber(request.player_id)
+        q = self._state.add_game_subscriber(request.player_id)
         print(f"[STREAM] {player.name} inscrito nos eventos de jogo.")
-        context.add_callback(lambda: subscriber_queue.put(None))
-        self._enqueue_snapshot_for_player(request.player_id, subscriber_queue)
+        context.add_callback(lambda: q.put(None))
+        self._enqueue_snapshot_for_player(request.player_id, q)
 
         try:
             while context.is_active():
-                event = subscriber_queue.get()
+                event = q.get()
                 if event is None:
                     break
                 yield event
@@ -66,45 +72,55 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             self._state.remove_game_subscriber(request.player_id)
             print(f"[STREAM] {player.name} saiu dos eventos de jogo.")
 
+    # ─────────────────────────── StartGame ────────────────────────────
+
     def StartGame(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
-            return game_pb2.CommandResponse(
-                success=False,
-                message="Jogador nao encontrado.",
-            )
+            return game_pb2.CommandResponse(success=False, message="Jogador nao encontrado.")
 
-        max_guesses = request.max_guesses_per_player or 6
+        max_rounds = request.max_rounds or 3
         success, message, category, assignments, current_turn = self._state.start_game(
-            max_guesses,
+            request.player_id, max_rounds,
         )
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
 
+        owner_id = self._state.get_room_owner_id() or ""
+        self._publish_session_start_events(player.player_id, max_rounds, category, assignments, current_turn, owner_id, is_new_session=False)
+        print(f"[GAME] {player.name} iniciou a partida.")
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    def _publish_session_start_events(self, actor_id, max_rounds, category, assignments, current_turn, owner_id, is_new_session: bool):
+        event_type = game_pb2.NEW_ROUND_STARTED if is_new_session else game_pb2.GAME_STARTED
+        session_number = self._state.get_session_number()
+
         started_event = game_pb2.GameEvent(
-            type=game_pb2.GAME_STARTED,
+            type=event_type,
             message=(
-                f"{player.name} iniciou a partida com {max_guesses} "
-                "palpites por jogador."
+                f"Sessao {session_number}/{max_rounds} iniciando!"
+                if is_new_session else
+                f"Partida iniciada! {max_rounds} sessao(oes) no total."
             ),
-            actor_player_id=player.player_id,
-            max_guesses_per_player=max_guesses,
-            remaining_guesses=self._remaining_guesses_to_proto(
-                self._state.get_remaining_guesses()
-            ),
+            actor_player_id=actor_id,
+            max_rounds=max_rounds,
+            session_number=session_number,
+            is_final_session=(session_number >= max_rounds),
+            room_owner_id=owner_id,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(started_event)
+
         round_event = game_pb2.GameEvent(
             type=game_pb2.ROUND_STARTED,
-            message=f"Categoria da rodada: {category.name}.",
+            message=f"Sessao {session_number}/{max_rounds} — Categoria: {category.name}.",
             category_id=category.category_id,
             category_name=category.name,
             theme=category.name,
-            max_guesses_per_player=max_guesses,
-            remaining_guesses=self._remaining_guesses_to_proto(
-                self._state.get_remaining_guesses()
-            ),
+            max_rounds=max_rounds,
+            session_number=session_number,
+            is_final_session=(session_number >= max_rounds),
+            room_owner_id=owner_id,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(round_event)
@@ -117,14 +133,12 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                 category_id=category.category_id,
                 category_name=category.name,
                 character_id=assignment.character.character_id,
+                object_name=assignment.character.name,
                 image_path=assignment.character.image_path,
                 theme=category.name,
                 timestamp_unix_ms=now_unix_ms(),
             )
-            self._state.publish_game_event_to_player(
-                assignment.player.player_id,
-                private_event,
-            )
+            self._state.publish_game_event_to_player(assignment.player.player_id, private_event)
 
         if current_turn is not None:
             if current_turn.phase == TurnPhase.HINT:
@@ -132,18 +146,17 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             else:
                 self._publish_turn_started(current_turn)
 
-        print(f"[GAME] {started_event.message}")
-        return game_pb2.CommandResponse(success=True, message=message)
+    # ─────────────────────────── SendPublicHint ───────────────────────
 
     def SendPublicHint(self, request, context):
-        success, message, actor, waiting_players, current_turn, is_game_over, game_over_reason = self._state.register_public_hint(
-            request.player_id,
-            request.hint,
+        success, message, actor, waiting_players, current_turn, is_round_over, round_end = (
+            self._state.register_public_hint(request.player_id, request.hint)
         )
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
 
         hint = request.hint.strip()
+        hint_cycle = self._state.get_hint_cycle()
         hint_event = game_pb2.GameEvent(
             type=game_pb2.PUBLIC_HINT_SENT,
             message=f"{actor.name} deu uma dica publica: {hint}",
@@ -153,16 +166,15 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             current_turn_player_id=actor.player_id,
             current_turn_player_name=actor.name,
             turn_phase=game_pb2.POST_HINT_GUESSES,
+            hint_cycle=hint_cycle,
+            max_hint_cycles=HINTS_PER_SESSION,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(hint_event)
+        print(f"[GAME] {hint_event.message}")
 
-        if is_game_over:
-            self._publish_game_ended(
-                self._state.get_scores(),
-                self._state.get_remaining_guesses(),
-                game_over_reason,
-            )
+        if is_round_over and round_end is not None:
+            self._publish_round_ended(round_end)
         elif waiting_players and current_turn is not None:
             self._publish_guess_phase_started(current_turn, waiting_players)
         elif current_turn is not None:
@@ -171,62 +183,50 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             else:
                 self._publish_turn_started(current_turn)
 
-        print(f"[GAME] {hint_event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
+
+    # ─────────────────────────── SubmitGuess ──────────────────────────
 
     def SubmitGuess(self, request, context):
         success, message, result = self._state.submit_guess(
-            request.guesser_player_id,
-            request.owner_player_id,
-            request.guess,
+            request.guesser_player_id, request.owner_player_id, request.guess,
         )
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
 
-        event = game_pb2.GameEvent(
-            type=game_pb2.GUESS_VALIDATED,
-            message=(
-                f"{result.guesser.name} tentou adivinhar o personagem de "
-                f"{result.owner.name}: {result.guess}. "
-                f"Resultado: {'correto' if result.accepted else 'incorreto'}."
-            ),
-            actor_player_id=result.guesser.player_id,
-            target_player_id=result.owner.player_id,
-            guess_id=result.guess_id,
-            guess_text=result.guess,
-            guesser_player_name=result.guesser.name,
-            owner_player_name=result.owner.name,
-            accepted=result.accepted,
-            scores=self._scores_to_proto(result.scores),
-            remaining_guesses=self._remaining_guesses_to_proto(
-                result.remaining_guesses
-            ),
-            current_turn_player_id=result.owner.player_id,
-            current_turn_player_name=result.owner.name,
-            turn_phase=game_pb2.TURN_PHASE_UNKNOWN,
-            timestamp_unix_ms=now_unix_ms(),
-        )
-        self._state.publish_game_event(event)
-
-        if result.accepted:
-            score_event = game_pb2.GameEvent(
-                type=game_pb2.SCORE_UPDATED,
-                message=f"{result.guesser.name} ganhou 10 pontos.",
-                actor_player_id=result.guesser.player_id,
-                scores=self._scores_to_proto(result.scores),
+        guesser = self._state.get_player(request.guesser_player_id)
+        owner = self._state.get_player(request.owner_player_id)
+        if guesser and owner:
+            # Evento público: anuncia que um palpite foi enviado, sem revelar o conteúdo
+            public_event = game_pb2.GameEvent(
+                type=game_pb2.GUESS_SUBMITTED,
+                message=f"{guesser.name} enviou um palpite para {owner.name}. Aguardando validacao.",
+                actor_player_id=guesser.player_id,
+                target_player_id=owner.player_id,
+                guess_id=result.guess_id,
+                guesser_player_name=guesser.name,
+                owner_player_name=owner.name,
                 timestamp_unix_ms=now_unix_ms(),
             )
-            self._state.publish_game_event(score_event)
+            self._state.publish_game_event(public_event)
 
-        print(f"[GAME] {event.message}")
-
-        if result.is_game_over:
-            self._publish_game_ended(
-                result.scores,
-                result.remaining_guesses,
-                result.game_over_reason,
+            # Evento privado para o dono: com o conteúdo do palpite para validar
+            pending_event = game_pb2.GameEvent(
+                type=game_pb2.PENDING_GUESS_FOR_OWNER,
+                message=f"{guesser.name} tentou adivinhar seu personagem: '{request.guess}'",
+                actor_player_id=guesser.player_id,
+                target_player_id=owner.player_id,
+                guess_id=result.guess_id,
+                guess_text=request.guess,
+                guesser_player_name=guesser.name,
+                owner_player_name=owner.name,
+                timestamp_unix_ms=now_unix_ms(),
             )
+            self._state.publish_game_event_to_player(owner.player_id, pending_event)
+            print(f"[GAME] {public_event.message}")
 
+        if result.is_session_over and result.round_end is not None:
+            self._publish_round_ended(result.round_end)
         elif result.next_turn is not None:
             if result.next_turn.phase == TurnPhase.HINT:
                 self._publish_hint_phase_started(result.next_turn)
@@ -235,15 +235,59 @@ class GameService(game_pb2_grpc.GameServiceServicer):
 
         return game_pb2.CommandResponse(success=True, message=message)
 
+    # ─────────────────────────── ValidateGuess ────────────────────────
+
     def ValidateGuess(self, request, context):
-        return game_pb2.CommandResponse(
-            success=False,
-            message="A validacao e automatica pelo servidor em SubmitGuess.",
+        success, message, result = self._state.validate_guess(
+            request.owner_player_id, request.guess_id, request.accepted,
         )
+        if not success:
+            return game_pb2.CommandResponse(success=False, message=message)
+
+        scores_proto = self._scores_to_proto(result.scores)
+
+        if result.accepted:
+            event = game_pb2.GameEvent(
+                type=game_pb2.GUESS_ACCEPTED,
+                message=(
+                    f"Palpite de {result.guesser.name} ACEITO! "
+                    f"'{result.guess_text}' — +{result.score_delta} pts (#{result.guess_order})"
+                ),
+                actor_player_id=result.owner.player_id,
+                target_player_id=result.guesser.player_id,
+                guess_id=result.guess_id,
+                guess_text=result.guess_text,
+                guesser_player_name=result.guesser.name,
+                owner_player_name=result.owner.name,
+                accepted=True,
+                scores=scores_proto,
+                score_delta=result.score_delta,
+                guess_order=result.guess_order,
+                timestamp_unix_ms=now_unix_ms(),
+            )
+        else:
+            event = game_pb2.GameEvent(
+                type=game_pb2.GUESS_REJECTED,
+                message=f"Palpite de {result.guesser.name} REJEITADO por {result.owner.name}.",
+                actor_player_id=result.owner.player_id,
+                target_player_id=result.guesser.player_id,
+                guess_id=result.guess_id,
+                guess_text=result.guess_text,
+                guesser_player_name=result.guesser.name,
+                owner_player_name=result.owner.name,
+                accepted=False,
+                timestamp_unix_ms=now_unix_ms(),
+            )
+
+        self._state.publish_game_event(event)
+        print(f"[GAME] {event.message}")
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    # ─────────────────────────── PassGuessOpportunity ─────────────────
 
     def PassGuessOpportunity(self, request, context):
-        success, message, player, next_turn, is_game_over, game_over_reason = self._state.pass_guess_opportunity(
-            request.player_id,
+        success, message, player, next_turn, is_round_over, round_end = (
+            self._state.pass_guess_opportunity(request.player_id)
         )
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
@@ -256,12 +300,8 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         )
         self._state.publish_game_event(event)
 
-        if is_game_over:
-            self._publish_game_ended(
-                self._state.get_scores(),
-                self._state.get_remaining_guesses(),
-                game_over_reason,
-            )
+        if is_round_over and round_end is not None:
+            self._publish_round_ended(round_end)
         elif next_turn is not None:
             if next_turn.phase == TurnPhase.HINT:
                 self._publish_hint_phase_started(next_turn)
@@ -271,21 +311,191 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         print(f"[GAME] {event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
 
+    # ─────────────────────────── VoteForNextRound ─────────────────────
+
+    def VoteForNextRound(self, request, context):
+        player = self._state.get_player(request.player_id)
+        if player is None:
+            return game_pb2.CommandResponse(success=False, message="Jogador nao encontrado.")
+
+        success, message, vote_result, new_round_data = self._state.cast_vote(
+            request.player_id, request.continue_playing,
+        )
+        if not success:
+            return game_pb2.CommandResponse(success=False, message=message)
+
+        vote_event = game_pb2.GameEvent(
+            type=game_pb2.VOTE_CAST,
+            message=(
+                f"{player.name} votou para {'continuar' if request.continue_playing else 'encerrar'}. "
+                f"({vote_result.votes_continue} continuar / {vote_result.votes_end} encerrar)"
+            ),
+            actor_player_id=request.player_id,
+            votes_continue=vote_result.votes_continue,
+            votes_end=vote_result.votes_end,
+            votes_needed=vote_result.total_players,
+            vote_continue=request.continue_playing,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        self._state.publish_game_event(vote_event)
+        print(f"[GAME] {vote_event.message}")
+
+        if vote_result.is_complete:
+            if vote_result.continue_playing and new_round_data is not None:
+                category, assignments, current_turn = new_round_data
+                owner_id = self._state.get_room_owner_id() or ""
+                self._publish_session_start_events(
+                    request.player_id, self._state.get_max_rounds(),
+                    category, assignments, current_turn, owner_id, is_new_session=True,
+                )
+            else:
+                self._publish_game_ended(self._state.get_scores())
+
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    # ─────────────────────────── RequestHintExchange ──────────────────
+
     def RequestHintExchange(self, request, context):
-        return self._not_implemented_yet("RequestHintExchange")
+        success, message, requester, target = self._state.request_hint_exchange(
+            request.requester_player_id, request.target_player_id, request.private_hint,
+        )
+        if not success:
+            return game_pb2.CommandResponse(success=False, message=message)
+
+        private_event = game_pb2.GameEvent(
+            type=game_pb2.HINT_EXCHANGE_REQUESTED,
+            message=f"{requester.name} quer trocar dicas com voce. Dica deles: '{request.private_hint}'",
+            actor_player_id=requester.player_id,
+            target_player_id=target.player_id,
+            private_hint=request.private_hint,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        self._state.publish_game_event_to_player(target.player_id, private_event)
+
+        public_event = game_pb2.GameEvent(
+            type=game_pb2.HINT_EXCHANGE_REQUESTED,
+            message=f"{requester.name} solicitou uma troca de dicas privada com {target.name}.",
+            actor_player_id=requester.player_id,
+            target_player_id=target.player_id,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        for pid in [p.player_id for p in self._state.get_players()
+                    if p.player_id not in {requester.player_id, target.player_id}]:
+            self._state.publish_game_event_to_player(pid, public_event)
+
+        print(f"[GAME] {public_event.message}")
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    # ─────────────────────────── RespondHintExchange ──────────────────
 
     def RespondHintExchange(self, request, context):
-        return self._not_implemented_yet("RespondHintExchange")
+        success, message, result = self._state.respond_hint_exchange(
+            request.responder_player_id, request.requester_player_id,
+            request.accepted, request.private_hint,
+        )
+        if not success:
+            return game_pb2.CommandResponse(success=False, message=message)
+
+        if result is None:
+            reject_event = game_pb2.GameEvent(
+                type=game_pb2.HINT_EXCHANGE_RESPONDED,
+                message=message,
+                actor_player_id=request.responder_player_id,
+                target_player_id=request.requester_player_id,
+                accepted=False,
+                timestamp_unix_ms=now_unix_ms(),
+            )
+            self._state.publish_game_event(reject_event)
+            print(f"[GAME] {reject_event.message}")
+            return game_pb2.CommandResponse(success=True, message=message)
+
+        self._publish_exchange_result(result)
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    def _publish_exchange_result(self, result: ExchangeResult) -> None:
+        self._state.publish_game_event_to_player(result.requester.player_id, game_pb2.GameEvent(
+            type=game_pb2.EXCHANGE_COMPLETED,
+            message=f"Troca com {result.responder.name} concluida. Dica deles: '{result.responder_hint}'",
+            actor_player_id=result.responder.player_id,
+            target_player_id=result.requester.player_id,
+            private_hint=result.responder_hint,
+            accepted=True,
+            timestamp_unix_ms=now_unix_ms(),
+        ))
+
+        self._state.publish_game_event_to_player(result.responder.player_id, game_pb2.GameEvent(
+            type=game_pb2.EXCHANGE_COMPLETED,
+            message=f"Troca com {result.requester.name} concluida. Dica deles: '{result.requester_hint}'",
+            actor_player_id=result.requester.player_id,
+            target_player_id=result.responder.player_id,
+            private_hint=result.requester_hint,
+            accepted=True,
+            timestamp_unix_ms=now_unix_ms(),
+        ))
+
+        public_event = game_pb2.GameEvent(
+            type=game_pb2.HINT_EXCHANGE_OCCURRED,
+            message=f"{result.requester.name} e {result.responder.name} trocaram dicas privadas.",
+            actor_player_id=result.requester.player_id,
+            target_player_id=result.responder.player_id,
+            accepted=True,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        for pid in [p.player_id for p in self._state.get_players()
+                    if p.player_id not in {result.requester.player_id, result.responder.player_id}]:
+            self._state.publish_game_event_to_player(pid, public_event)
+
+        for spy, caught in result.spy_results:
+            scores = self._state.get_scores()
+            if caught:
+                event = game_pb2.GameEvent(
+                    type=game_pb2.SPY_DISCOVERED,
+                    message=f"{spy.name} foi pego espiando a troca de {result.requester.name} e {result.responder.name}! -5 pontos.",
+                    actor_player_id=spy.player_id,
+                    spy_caught=True,
+                    scores=self._scores_to_proto(scores),
+                    score_delta=-5,
+                    timestamp_unix_ms=now_unix_ms(),
+                )
+                self._state.publish_game_event(event)
+                print(f"[GAME] {event.message}")
+            else:
+                self._state.publish_game_event_to_player(spy.player_id, game_pb2.GameEvent(
+                    type=game_pb2.SPY_SUCCESSFUL,
+                    message=(
+                        f"Espionagem bem-sucedida! +3 pts. "
+                        f"{result.requester.name} disse '{result.requester_hint}', "
+                        f"{result.responder.name} disse '{result.responder_hint}'."
+                    ),
+                    actor_player_id=spy.player_id,
+                    spy_caught=False,
+                    scores=self._scores_to_proto(scores),
+                    score_delta=3,
+                    private_hint=(
+                        f"{result.requester.name}:'{result.requester_hint}' "
+                        f"/ {result.responder.name}:'{result.responder_hint}'"
+                    ),
+                    timestamp_unix_ms=now_unix_ms(),
+                ))
+
+    # ─────────────────────────── SpyOnExchange ────────────────────────
 
     def SpyOnExchange(self, request, context):
-        return self._not_implemented_yet("SpyOnExchange")
-
-    @staticmethod
-    def _not_implemented_yet(method_name: str):
-        return game_pb2.CommandResponse(
-            success=False,
-            message=f"{method_name} sera implementado na proxima etapa.",
+        success, message = self._state.spy_on_exchange(
+            request.spy_player_id, request.player_a_id, request.player_b_id,
         )
+        if not success:
+            return game_pb2.CommandResponse(success=False, message=message)
+
+        player_a = self._state.get_player(request.player_a_id)
+        player_b = self._state.get_player(request.player_b_id)
+        names = f"{player_a.name} e {player_b.name}" if player_a and player_b else "dois jogadores"
+        spy = self._state.get_player(request.spy_player_id)
+        if spy:
+            print(f"[GAME] {spy.name} esta espiando {names}.")
+        return game_pb2.CommandResponse(success=True, message=message)
+
+    # ─────────────────────────── Publish helpers ──────────────────────
 
     def _publish_turn_started(self, turn) -> None:
         event = game_pb2.GameEvent(
@@ -296,6 +506,9 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             current_turn_player_name=turn.player.name,
             turn_phase=self._phase_to_proto(turn.phase),
             players=self._players_to_proto(self._state.get_players()),
+            hint_cycle=turn.hint_cycle,
+            max_hint_cycles=HINTS_PER_SESSION,
+            session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(event)
@@ -303,23 +516,24 @@ class GameService(game_pb2_grpc.GameServiceServicer):
 
     @staticmethod
     def _turn_started_message(turn) -> str:
+        prefix = f"Sessao {turn.session_number} · Ciclo {turn.hint_cycle}/{HINTS_PER_SESSION}"
         if turn.phase == TurnPhase.PRE_HINT_GUESS:
-            return (
-                f"Rodada {turn.round_number}: turno de {turn.player.name}. "
-                "Ele pode fazer um palpite ou seguir para a dica."
-            )
+            return f"{prefix}: turno de {turn.player.name}. Pode palpitar ou seguir para a dica."
         if turn.phase == TurnPhase.HINT:
-            return f"Rodada {turn.round_number}: {turn.player.name} deve dar uma dica."
-        return f"Rodada {turn.round_number}: turno de {turn.player.name}."
+            return f"{prefix}: {turn.player.name} deve dar uma dica."
+        return f"{prefix}: turno de {turn.player.name}."
 
     def _publish_hint_phase_started(self, turn) -> None:
         event = game_pb2.GameEvent(
             type=game_pb2.HINT_PHASE_STARTED,
-            message=f"{turn.player.name} deve enviar uma dica publica.",
+            message=f"{turn.player.name} deve enviar uma dica publica (ciclo {turn.hint_cycle}/{HINTS_PER_SESSION}).",
             actor_player_id=turn.player.player_id,
             current_turn_player_id=turn.player.player_id,
             current_turn_player_name=turn.player.name,
             turn_phase=self._phase_to_proto(turn.phase),
+            hint_cycle=turn.hint_cycle,
+            max_hint_cycles=HINTS_PER_SESSION,
+            session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(event)
@@ -328,168 +542,209 @@ class GameService(game_pb2_grpc.GameServiceServicer):
     def _publish_guess_phase_started(self, turn, waiting_players) -> None:
         event = game_pb2.GameEvent(
             type=game_pb2.GUESS_PHASE_STARTED,
-            message=(
-                f"Todos podem tentar adivinhar o personagem de {turn.player.name} "
-                "ou passar."
-            ),
+            message=f"Todos podem tentar adivinhar o personagem de {turn.player.name} ou passar.",
             actor_player_id=turn.player.player_id,
             target_player_id=turn.player.player_id,
             current_turn_player_id=turn.player.player_id,
             current_turn_player_name=turn.player.name,
             turn_phase=game_pb2.POST_HINT_GUESSES,
             players=self._players_to_proto(waiting_players),
+            hint_cycle=turn.hint_cycle,
+            max_hint_cycles=HINTS_PER_SESSION,
+            session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(event)
         print(f"[GAME] {event.message}")
 
-    def _publish_game_ended(
-        self,
-        scores: dict[str, int],
-        remaining_guesses: dict[str, int],
-        game_over_reason: str | None,
-    ) -> None:
-        max_score = max(scores.values()) if scores else 0
-        winners = [
-            p.name for p in self._state.get_players()
-            if scores.get(p.player_id, 0) == max_score
+    def _publish_round_ended(self, round_end: RoundEndResult) -> None:
+        scores = self._state.get_scores()
+        players_by_id = {p.player_id: p for p in self._state.get_players()}
+
+        reveals_proto = [
+            game_pb2.CharacterReveal(
+                player_id=r.player.player_id,
+                player_name=r.player.name,
+                character_name=r.character.name,
+                character_id=r.character.character_id,
+            )
+            for r in round_end.reveals
         ]
 
-        if game_over_reason == "all_guesses_exhausted":
-            reason_text = "os palpites de todos os jogadores acabaram"
+        deltas_proto = [
+            game_pb2.PlayerScore(
+                player_id=pid,
+                player_name=players_by_id[pid].name if pid in players_by_id else pid,
+                score=delta,
+            )
+            for pid, delta in round_end.score_deltas.items()
+            if delta != 0
+        ]
+
+        round_end_event = game_pb2.GameEvent(
+            type=game_pb2.ROUND_ENDED,
+            message="Sessao encerrada! Veja os personagens revelados e os pontos ganhos.",
+            scores=self._scores_to_proto(scores),
+            score_deltas=deltas_proto,
+            character_reveals=reveals_proto,
+            is_final_session=round_end.is_final,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        self._state.publish_game_event(round_end_event)
+        print("[GAME] Sessao encerrada.")
+
+        if round_end.score_changes:
+            summary_parts = []
+            for sc in round_end.score_changes:
+                name = players_by_id[sc.player_id].name if sc.player_id in players_by_id else sc.player_id
+                sign = "+" if sc.points_delta > 0 else ""
+                summary_parts.append(f"{name} {sign}{sc.points_delta} ({sc.reason})")
+            summary_event = game_pb2.GameEvent(
+                type=game_pb2.ROUND_SCORE_SUMMARY,
+                message="Resumo de pontuacao: " + "; ".join(summary_parts),
+                scores=self._scores_to_proto(scores),
+                timestamp_unix_ms=now_unix_ms(),
+            )
+            self._state.publish_game_event(summary_event)
+
+        if round_end.is_final:
+            self._publish_game_ended(scores)
         else:
-            reason_text = "todos os personagens foram descobertos"
+            vote_event = game_pb2.GameEvent(
+                type=game_pb2.VOTE_STARTED,
+                message="Votem: continuar com uma nova sessao ou encerrar o jogo?",
+                votes_continue=0,
+                votes_end=0,
+                votes_needed=len(self._state.get_players()),
+                timestamp_unix_ms=now_unix_ms(),
+            )
+            self._state.publish_game_event(vote_event)
+            print("[GAME] Votacao iniciada.")
+
+    def _publish_game_ended(self, scores: dict) -> None:
+        players_by_id = {p.player_id: p for p in self._state.get_players()}
+        sorted_players = sorted(players_by_id.values(), key=lambda p: scores.get(p.player_id, 0), reverse=True)
+
+        max_score = max(scores.values()) if scores else 0
+        winners = [p.name for p in sorted_players if scores.get(p.player_id, 0) == max_score]
 
         if len(winners) > 1:
-            winners_str = ", ".join(winners)
-            msg_fim = (
-                "Fim de jogo! "
-                f"{reason_text.capitalize()}. "
-                f"Empate entre {winners_str} com {max_score} pontos!"
-            )
+            msg = f"Fim de jogo! Empate entre {', '.join(winners)} com {max_score} pontos!"
         else:
-            winner = winners[0] if winners else "ninguem"
-            msg_fim = (
-                "Fim de jogo! "
-                f"{reason_text.capitalize()}. "
-                f"O vencedor e {winner} com {max_score} pontos!"
+            msg = f"Fim de jogo! Vencedor: {winners[0] if winners else 'ninguem'} com {max_score} pontos!"
+
+        ranking = [
+            game_pb2.RankingEntry(
+                position=i + 1,
+                player_id=p.player_id,
+                player_name=p.name,
+                score=scores.get(p.player_id, 0),
             )
+            for i, p in enumerate(sorted_players)
+        ]
 
         end_event = game_pb2.GameEvent(
             type=game_pb2.GAME_ENDED,
-            message=msg_fim,
+            message=msg,
             scores=self._scores_to_proto(scores),
-            max_guesses_per_player=self._state.get_max_guesses_per_player(),
-            remaining_guesses=self._remaining_guesses_to_proto(remaining_guesses),
+            ranking=ranking,
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(end_event)
-        print(f"[GAME] {msg_fim}")
 
-    def _enqueue_snapshot_for_player(self, player_id: str, subscriber_queue) -> None:
+        final_ranking_event = game_pb2.GameEvent(
+            type=game_pb2.FINAL_RANKING,
+            message="Ranking final da partida.",
+            scores=self._scores_to_proto(scores),
+            ranking=ranking,
+            timestamp_unix_ms=now_unix_ms(),
+        )
+        self._state.publish_game_event(final_ranking_event)
+        print(f"[GAME] {msg}")
+
+    def _enqueue_snapshot_for_player(self, player_id: str, q) -> None:
         game_started, category, character, current_turn, players = (
             self._state.get_game_snapshot_for_player(player_id)
         )
-        if not game_started:
+        owner_id = self._state.get_room_owner_id() or ""
+        session_number = self._state.get_session_number()
+        max_rounds = self._state.get_max_rounds()
+
+        if not game_started and not self._state.is_voting_phase():
             return
 
         if category is not None:
-            subscriber_queue.put(
-                game_pb2.GameEvent(
-                    type=game_pb2.ROUND_STARTED,
-                    message=f"Categoria da rodada: {category.name}.",
-                    category_id=category.category_id,
-                    category_name=category.name,
-                    theme=category.name,
-                    max_guesses_per_player=self._state.get_max_guesses_per_player(),
-                    remaining_guesses=self._remaining_guesses_to_proto(
-                        self._state.get_remaining_guesses()
-                    ),
-                    timestamp_unix_ms=now_unix_ms(),
-                )
-            )
+            q.put(game_pb2.GameEvent(
+                type=game_pb2.ROUND_STARTED,
+                message=f"Sessao {session_number}/{max_rounds} — Categoria: {category.name}.",
+                category_id=category.category_id,
+                category_name=category.name,
+                theme=category.name,
+                max_rounds=max_rounds,
+                session_number=session_number,
+                room_owner_id=owner_id,
+                timestamp_unix_ms=now_unix_ms(),
+            ))
 
         if category is not None and character is not None:
-            subscriber_queue.put(
-                game_pb2.GameEvent(
-                    type=game_pb2.CHARACTER_ASSIGNED,
-                    message="Voce recebeu seu personagem secreto.",
-                    target_player_id=player_id,
-                    category_id=category.category_id,
-                    category_name=category.name,
-                    character_id=character.character_id,
-                    image_path=character.image_path,
-                    theme=category.name,
-                    timestamp_unix_ms=now_unix_ms(),
-                )
-            )
+            q.put(game_pb2.GameEvent(
+                type=game_pb2.CHARACTER_ASSIGNED,
+                message="Voce recebeu seu personagem secreto.",
+                target_player_id=player_id,
+                category_id=category.category_id,
+                category_name=category.name,
+                character_id=character.character_id,
+                object_name=character.name,
+                image_path=character.image_path,
+                theme=category.name,
+                timestamp_unix_ms=now_unix_ms(),
+            ))
 
         if current_turn is not None:
-            subscriber_queue.put(
-                game_pb2.GameEvent(
-                    type=game_pb2.TURN_STARTED,
-                    message=(
-                        f"Rodada {current_turn.round_number}: "
-                        f"turno de {current_turn.player.name}."
-                    ),
-                    actor_player_id=current_turn.player.player_id,
-                    current_turn_player_id=current_turn.player.player_id,
-                    current_turn_player_name=current_turn.player.name,
-                    turn_phase=self._phase_to_proto(current_turn.phase),
-                    players=self._players_to_proto(players),
-                    max_guesses_per_player=self._state.get_max_guesses_per_player(),
-                    remaining_guesses=self._remaining_guesses_to_proto(
-                        self._state.get_remaining_guesses()
-                    ),
-                    timestamp_unix_ms=now_unix_ms(),
-                )
-            )
+            q.put(game_pb2.GameEvent(
+                type=game_pb2.TURN_STARTED,
+                message=self._turn_started_message(current_turn),
+                actor_player_id=current_turn.player.player_id,
+                current_turn_player_id=current_turn.player.player_id,
+                current_turn_player_name=current_turn.player.name,
+                turn_phase=self._phase_to_proto(current_turn.phase),
+                players=self._players_to_proto(players),
+                hint_cycle=current_turn.hint_cycle,
+                max_hint_cycles=HINTS_PER_SESSION,
+                session_number=current_turn.session_number,
+                room_owner_id=owner_id,
+                timestamp_unix_ms=now_unix_ms(),
+            ))
+
+        if self._state.is_voting_phase():
+            q.put(game_pb2.GameEvent(
+                type=game_pb2.VOTE_STARTED,
+                message="Votem: continuar com uma nova sessao ou encerrar o jogo?",
+                votes_continue=0, votes_end=0,
+                votes_needed=len(players),
+                timestamp_unix_ms=now_unix_ms(),
+            ))
+
+    # ─────────────────────────── Proto helpers ────────────────────────
 
     @staticmethod
     def _phase_to_proto(phase: TurnPhase):
-        if phase == TurnPhase.PRE_HINT_GUESS:
-            return game_pb2.PRE_HINT_GUESS
-        if phase == TurnPhase.HINT:
-            return game_pb2.HINT
-        if phase == TurnPhase.POST_HINT_GUESSES:
-            return game_pb2.POST_HINT_GUESSES
-        return game_pb2.TURN_PHASE_UNKNOWN
+        mapping = {
+            TurnPhase.PRE_HINT_GUESS: game_pb2.PRE_HINT_GUESS,
+            TurnPhase.HINT: game_pb2.HINT,
+            TurnPhase.POST_HINT_GUESSES: game_pb2.POST_HINT_GUESSES,
+        }
+        return mapping.get(phase, game_pb2.TURN_PHASE_UNKNOWN)
 
     @staticmethod
     def _players_to_proto(players):
-        return [
-            game_pb2.Player(player_id=player.player_id, name=player.name)
-            for player in players
-        ]
+        return [game_pb2.Player(player_id=p.player_id, name=p.name) for p in players]
 
     def _scores_to_proto(self, scores):
-        players_by_id = {
-            player.player_id: player
-            for player in self._state.get_players()
-        }
+        players_by_id = {p.player_id: p for p in self._state.get_players()}
         return [
-            game_pb2.PlayerScore(
-                player_id=player_id,
-                player_name=players_by_id[player_id].name,
-                score=score,
-            )
-            for player_id, score in scores.items()
-            if player_id in players_by_id
-        ]
-
-    def _remaining_guesses_to_proto(self, remaining_guesses):
-        players_by_id = {
-            player.player_id: player
-            for player in self._state.get_players()
-        }
-        return [
-            game_pb2.PlayerGuesses(
-                player_id=player_id,
-                player_name=players_by_id[player_id].name,
-                guesses_left=guesses_left,
-            )
-            for player_id, guesses_left in remaining_guesses.items()
-            if player_id in players_by_id
+            game_pb2.PlayerScore(player_id=pid, player_name=players_by_id[pid].name, score=s)
+            for pid, s in scores.items() if pid in players_by_id
         ]
 
 
@@ -500,17 +755,11 @@ class ChatService(game_pb2_grpc.ChatServiceServicer):
     def SendChatMessage(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
-            return game_pb2.CommandResponse(
-                success=False,
-                message="Jogador nao encontrado.",
-            )
+            return game_pb2.CommandResponse(success=False, message="Jogador nao encontrado.")
 
         text = request.text.strip()
         if not text:
-            return game_pb2.CommandResponse(
-                success=False,
-                message="Mensagem vazia.",
-            )
+            return game_pb2.CommandResponse(success=False, message="Mensagem vazia.")
 
         event = game_pb2.ChatEvent(
             player_id=player.player_id,
@@ -520,24 +769,20 @@ class ChatService(game_pb2_grpc.ChatServiceServicer):
         )
         self._state.publish_chat_event(event)
         print(f"[CHAT] {player.name}: {text}")
-
-        return game_pb2.CommandResponse(
-            success=True,
-            message="Mensagem enviada.",
-        )
+        return game_pb2.CommandResponse(success=True, message="Mensagem enviada.")
 
     def SubscribeToChatEvents(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
             context.abort(grpc.StatusCode.NOT_FOUND, "Jogador nao encontrado.")
 
-        subscriber_queue = self._state.add_chat_subscriber(request.player_id)
+        q = self._state.add_chat_subscriber(request.player_id)
         print(f"[STREAM] {player.name} inscrito no chat.")
-        context.add_callback(lambda: subscriber_queue.put(None))
+        context.add_callback(lambda: q.put(None))
 
         try:
             while context.is_active():
-                event = subscriber_queue.get()
+                event = q.get()
                 if event is None:
                     break
                 yield event
@@ -549,14 +794,12 @@ class ChatService(game_pb2_grpc.ChatServiceServicer):
 def serve() -> None:
     state = GameState()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=20))
-
     game_pb2_grpc.add_GameServiceServicer_to_server(GameService(state), server)
     game_pb2_grpc.add_ChatServiceServicer_to_server(ChatService(state), server)
 
     address = "[::]:50051"
     server.add_insecure_port(address)
     server.start()
-
     print(f"Servidor gRPC ouvindo em {address}")
     print("Pressione Ctrl+C para encerrar.")
     server.wait_for_termination()

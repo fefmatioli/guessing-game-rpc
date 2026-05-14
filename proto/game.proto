@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package guessinggame;
 
-// GameService recebe comandos da partida e publica eventos de jogo.
 service GameService {
   rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
   rpc StartGame(StartGameRequest) returns (CommandResponse);
@@ -13,10 +12,10 @@ service GameService {
   rpc RequestHintExchange(RequestHintExchangeRequest) returns (CommandResponse);
   rpc RespondHintExchange(RespondHintExchangeRequest) returns (CommandResponse);
   rpc SpyOnExchange(SpyOnExchangeRequest) returns (CommandResponse);
+  rpc VoteForNextRound(VoteForNextRoundRequest) returns (CommandResponse);
   rpc SubscribeToGameEvents(SubscribeRequest) returns (stream GameEvent);
 }
 
-// ChatService fica separado das acoes do jogo.
 service ChatService {
   rpc SendChatMessage(ChatMessageRequest) returns (CommandResponse);
   rpc SubscribeToChatEvents(SubscribeRequest) returns (stream ChatEvent);
@@ -42,6 +41,19 @@ enum GameEventType {
   ROUND_STARTED = 16;
   CHARACTER_ASSIGNED = 17;
   GAME_ENDED = 18;
+  ROUND_ENDED = 19;
+  VOTE_STARTED = 20;
+  VOTE_CAST = 21;
+  NEW_ROUND_STARTED = 22;
+  EXCHANGE_COMPLETED = 23;
+  SPY_CAUGHT = 24;
+  GUESS_ACCEPTED = 25;
+  GUESS_REJECTED = 26;
+  SPY_SUCCESSFUL = 27;
+  SPY_DISCOVERED = 28;
+  ROUND_SCORE_SUMMARY = 29;
+  FINAL_RANKING = 30;
+  PENDING_GUESS_FOR_OWNER = 31;
 }
 
 enum TurnPhase {
@@ -56,6 +68,21 @@ message Player {
   string name = 2;
 }
 
+message CharacterReveal {
+  string player_id = 1;
+  string player_name = 2;
+  string character_name = 3;
+  string character_id = 4;
+}
+
+message RankingEntry {
+  int32 position = 1;
+  string player_id = 2;
+  string player_name = 3;
+  int32 score = 4;
+  int32 points_this_round = 5;
+}
+
 message JoinGameRequest {
   string player_name = 1;
 }
@@ -65,6 +92,7 @@ message JoinGameResponse {
   string message = 2;
   string player_id = 3;
   repeated Player players = 4;
+  string room_owner_id = 5;
 }
 
 message SubscribeRequest {
@@ -99,8 +127,26 @@ message GameEvent {
   string category_name = 20;
   string character_id = 21;
   string image_path = 22;
-  int32 max_guesses_per_player = 23;
+  int32 max_rounds = 23;
   repeated PlayerGuesses remaining_guesses = 24;
+  int32 round_number = 25;
+  string room_owner_id = 26;
+  repeated PlayerScore score_deltas = 27;
+  bool vote_continue = 28;
+  int32 votes_continue = 29;
+  int32 votes_end = 30;
+  int32 votes_needed = 31;
+  string private_hint = 32;
+  bool spy_caught = 33;
+  string owner_player_id = 34;
+  repeated CharacterReveal character_reveals = 35;
+  int32 score_delta = 36;
+  int32 hint_cycle = 37;
+  int32 max_hint_cycles = 38;
+  repeated RankingEntry ranking = 39;
+  int32 guess_order = 40;
+  int32 session_number = 41;
+  bool is_final_session = 42;
 }
 
 message PlayerScore {
@@ -117,7 +163,7 @@ message PlayerGuesses {
 
 message StartGameRequest {
   string player_id = 1;
-  int32 max_guesses_per_player = 2;
+  int32 max_rounds = 2;
 }
 
 message SendPublicHintRequest {
@@ -137,9 +183,8 @@ message PassGuessOpportunityRequest {
 
 message ValidateGuessRequest {
   string owner_player_id = 1;
-  string guesser_player_id = 2;
+  string guess_id = 2;
   bool accepted = 3;
-  string guess_id = 4;
 }
 
 message RequestHintExchangeRequest {
@@ -159,6 +204,11 @@ message SpyOnExchangeRequest {
   string spy_player_id = 1;
   string player_a_id = 2;
   string player_b_id = 3;
+}
+
+message VoteForNextRoundRequest {
+  string player_id = 1;
+  bool continue_playing = 2;
 }
 
 message ChatMessageRequest {

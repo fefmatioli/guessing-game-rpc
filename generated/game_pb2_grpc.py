@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class GameServiceStub(object):
-    """GameService recebe comandos da partida e publica eventos de jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -80,6 +79,11 @@ class GameServiceStub(object):
                 request_serializer=game__pb2.SpyOnExchangeRequest.SerializeToString,
                 response_deserializer=game__pb2.CommandResponse.FromString,
                 _registered_method=True)
+        self.VoteForNextRound = channel.unary_unary(
+                '/guessinggame.GameService/VoteForNextRound',
+                request_serializer=game__pb2.VoteForNextRoundRequest.SerializeToString,
+                response_deserializer=game__pb2.CommandResponse.FromString,
+                _registered_method=True)
         self.SubscribeToGameEvents = channel.unary_stream(
                 '/guessinggame.GameService/SubscribeToGameEvents',
                 request_serializer=game__pb2.SubscribeRequest.SerializeToString,
@@ -88,8 +92,7 @@ class GameServiceStub(object):
 
 
 class GameServiceServicer(object):
-    """GameService recebe comandos da partida e publica eventos de jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def JoinGame(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -140,6 +143,12 @@ class GameServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def SpyOnExchange(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VoteForNextRound(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -199,6 +208,11 @@ def add_GameServiceServicer_to_server(servicer, server):
                     request_deserializer=game__pb2.SpyOnExchangeRequest.FromString,
                     response_serializer=game__pb2.CommandResponse.SerializeToString,
             ),
+            'VoteForNextRound': grpc.unary_unary_rpc_method_handler(
+                    servicer.VoteForNextRound,
+                    request_deserializer=game__pb2.VoteForNextRoundRequest.FromString,
+                    response_serializer=game__pb2.CommandResponse.SerializeToString,
+            ),
             'SubscribeToGameEvents': grpc.unary_stream_rpc_method_handler(
                     servicer.SubscribeToGameEvents,
                     request_deserializer=game__pb2.SubscribeRequest.FromString,
@@ -213,8 +227,7 @@ def add_GameServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class GameService(object):
-    """GameService recebe comandos da partida e publica eventos de jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def JoinGame(request,
@@ -460,6 +473,33 @@ class GameService(object):
             _registered_method=True)
 
     @staticmethod
+    def VoteForNextRound(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guessinggame.GameService/VoteForNextRound',
+            game__pb2.VoteForNextRoundRequest.SerializeToString,
+            game__pb2.CommandResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def SubscribeToGameEvents(request,
             target,
             options=(),
@@ -488,8 +528,7 @@ class GameService(object):
 
 
 class ChatServiceStub(object):
-    """ChatService fica separado das acoes do jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -510,8 +549,7 @@ class ChatServiceStub(object):
 
 
 class ChatServiceServicer(object):
-    """ChatService fica separado das acoes do jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def SendChatMessage(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -547,8 +585,7 @@ def add_ChatServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class ChatService(object):
-    """ChatService fica separado das acoes do jogo.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def SendChatMessage(request,
