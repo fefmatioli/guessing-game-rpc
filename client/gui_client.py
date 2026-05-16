@@ -100,6 +100,15 @@ def _placeholder_img(size=(280, 280)) -> Image.Image:
     return img
 
 
+def _fit_image_inside(img: Image.Image, size=(280, 280)) -> Image.Image:
+    fitted = ImageOps.contain(img, size, method=Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", size, (25, 30, 51, 255))
+    x = (size[0] - fitted.width) // 2
+    y = (size[1] - fitted.height) // 2
+    canvas.paste(fitted, (x, y), fitted)
+    return canvas
+
+
 class PlayerCard(ctk.CTkFrame):
     def __init__(self, parent, name: str, is_me: bool, is_owner: bool):
         bg = COLORS["accent_muted"] if is_me else COLORS["surface_alt"]
@@ -1162,7 +1171,7 @@ class GuessingGameApp(ctk.CTk):
             return
         try:
             img = Image.open(full).convert("RGBA")
-            img = ImageOps.fit(img, (280, 280))
+            img = _fit_image_inside(img, (280, 280))
             self.char_image = ctk.CTkImage(light_image=img, dark_image=img, size=(280, 280))
             self.char_img_lbl.configure(image=self.char_image, text="")
         except Exception as e:
