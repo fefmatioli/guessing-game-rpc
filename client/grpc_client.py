@@ -50,11 +50,12 @@ class GameRpcClient:
             game_pb2.ChatMessageRequest(player_id=self.player_id, text=text)
         )
 
-    def start_game(self, max_rounds: int = 3):
+    def start_game(self, max_rounds: int = 3, max_turns: int = 3):
         return self.game.StartGame(
             game_pb2.StartGameRequest(
                 player_id=self.player_id,
                 max_rounds=max_rounds,
+                max_turns=max_turns,
             )
         )
 

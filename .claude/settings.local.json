@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python -c \"import sys; sys.path.insert\\(0,'generated'\\); sys.path.insert\\(0,'server'\\); import game_state; import server; print\\('OK'\\)\")",
       "Bash(python -c \"import sys; sys.path.insert\\(0,'generated'\\); sys.path.insert\\(0,'client'\\); import grpc_client; import gui_client; print\\('OK'\\)\")",
-      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\Fernanda\\\\Desktop\\\\guessing-game-rpc\\\\assets\\\\characters\" -Recurse | ForEach-Object { $_.FullName })"
+      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\Fernanda\\\\Desktop\\\\guessing-game-rpc\\\\assets\\\\characters\" -Recurse | ForEach-Object { $_.FullName })",
+      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\Fernanda\\\\Desktop\\\\guessing-game-rpc\" -Force | ForEach-Object { $_.Name })"
     ]
   }
 }

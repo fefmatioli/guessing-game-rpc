@@ -164,6 +164,7 @@ message PlayerGuesses {
 message StartGameRequest {
   string player_id = 1;
   int32 max_rounds = 2;
+  int32 max_turns = 3;
 }
 
 message SendPublicHintRequest {

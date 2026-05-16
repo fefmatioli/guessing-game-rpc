@@ -1,181 +1,133 @@
-# Guessing Game RPC
+# Guessing Game — RPC
 
-Aplicacao multijogador de adivinhacao usando Python, gRPC e CustomTkinter.
+Jogo de adivinhação multijogador em Python com gRPC. Cada jogador recebe um personagem secreto de uma categoria temática e deve ajudar os outros a adivinhar o seu personagem enviando dicas públicas, enquanto tenta descobrir o personagem dos demais.
 
-O jogo usa arquitetura cliente-servidor, estado centralizado em memoria e
-atualizacao por eventos via server streaming. Nao ha polling.
+---
 
-## O Que Ja Funciona
+## Requisitos
 
-- `GameService` e `ChatService` separados no `.proto`;
-- entrada de jogadores com `JoinGame`;
-- chat em tempo real por server streaming;
-- inicio da partida com `StartGame`;
-- sorteio de uma categoria geek para a rodada;
-- sorteio de um personagem diferente para cada jogador;
-- evento publico `ROUND_STARTED` com a categoria;
-- evento privado `CHARACTER_ASSIGNED` com a imagem do personagem do jogador;
-- primeira rodada apenas com dicas publicas;
-- a partir da segunda rodada, palpite opcional antes da dica;
-- palpites dos demais apos a dica, uma resposta por oportunidade;
-- validacao automatica de palpites pelo servidor usando `accepted_answers`;
-- pontuacao automatica quando o palpite esta correto;
-- cliente grafico que mostra categoria, imagem, eventos e chat.
+- Python 3.10+
+- Dependências listadas em `requirements.txt`
 
-## Categorias
+---
 
-O catalogo atual fica em `assets/data/characters.json` e possui:
-
-- Lord of the Rings
-- Star Wars
-- DC
-- RPG
-- Games
-- Anime
-
-O servidor escolhe uma categoria que tenha personagens suficientes para todos os
-jogadores conectados. Se houver mais jogadores que personagens em qualquer
-categoria, a partida nao inicia.
-
-## Estrutura
-
-```text
-guessing-game-rpc/
-|-- assets/
-|   |-- characters/
-|   |   |-- lotr/
-|   |   |-- starwars/
-|   |   |-- dc/
-|   |   |-- rpg/
-|   |   |-- games/
-|   |   `-- anime/
-|   `-- data/
-|       `-- characters.json
-|-- proto/
-|   `-- game.proto
-|-- generated/
-|-- server/
-|   |-- server.py
-|   `-- game_state.py
-|-- client/
-|   |-- client.py
-|   |-- grpc_client.py
-|   `-- gui_client.py
-|-- requirements.txt
-`-- README.md
-```
-
-## Instalar Dependencias
+## Instalação
 
 ```bash
+# Crie e ative o ambiente virtual
 python -m venv .venv
+
+# Windows
 .venv\Scripts\activate
-pip install -r requirements.txt
-```
 
-No Linux/macOS:
-
-```bash
-python -m venv .venv
+# Linux / macOS
 source .venv/bin/activate
+
+# Instale as dependências
 pip install -r requirements.txt
 ```
 
-## Gerar Arquivos gRPC
-
-Sempre que `proto/game.proto` mudar:
+Caso altere `proto/game.proto`, regenere os stubs:
 
 ```bash
 python -m grpc_tools.protoc -I proto --python_out=generated --grpc_python_out=generated proto/game.proto
 ```
 
+---
+
 ## Executar
 
-Servidor:
+**Servidor** (uma instância):
 
 ```bash
 python server/server.py
 ```
 
-Cliente grafico:
+**Cliente gráfico** (uma janela por jogador — abra quantas precisar):
 
 ```bash
 python client/gui_client.py
 ```
 
-Cliente terminal:
+---
 
-```bash
-python client/client.py
+## Fluxo do jogo
+
+1. Todos os jogadores entram digitando seu nome e clicando em **Entrar**.
+2. O dono da sala clica em **Iniciar Partida** e define o número de sessões e turnos por sessão.
+3. O servidor sorteia uma **categoria temática** e distribui um **personagem secreto** diferente para cada jogador.
+4. Cada sessão roda em ciclos: em cada ciclo, todos os jogadores dão uma dica pública sobre seu personagem, um por vez.
+5. Após cada dica, os demais jogadores podem enviar um **palpite** ou **passar**.
+6. O **dono do personagem** recebe o palpite e decide se aceita ou rejeita.
+7. Ao final de cada sessão os personagens são revelados e os pontos são somados.
+8. Se não for a última sessão, os jogadores votam se querem continuar.
+
+### Pontuação
+
+| Evento | Pontos |
+|---|---|
+| 1.º a acertar (globalmente na sessão) | +15 |
+| 2.º a acertar | +10 |
+| 3.º a acertar | +7 |
+| 4.º ou mais | +4 |
+| Único a acertar (bônus solo) | +5 extra |
+| Dono: exatamente 1 pessoa acertou | +12 |
+| Dono: exatamente 2 acertaram | +8 |
+| Dono: 3 ou mais acertaram | +4 |
+| Dono: ninguém acertou | 0 |
+| Dono: todos acertaram (penalidade) | −5 |
+| Espionagem bem-sucedida | +3 |
+| Espionagem descoberta | −5 |
+
+### Ações especiais
+
+- **Troca de dica privada** — um jogador solicita a outro uma troca secreta de uma palavra. Só pode ser usada uma vez por sessão por jogador.
+- **Espionar troca** — qualquer jogador pode tentar interceptar uma troca privada entre dois outros. Há 30 % de chance de ser descoberto.
+
+---
+
+## Categorias
+
+O catálogo fica em `assets/data/characters.json` e inclui:
+
+| Categoria | Personagens |
+|---|---|
+| Lord of the Rings | Gandalf, Frodo, Aragorn, Legolas, Gimli, Sauron, Gollum, Saruman |
+| Star Wars | Darth Vader, Luke, Leia, Yoda, Obi-Wan, Han Solo, Chewbacca, Palpatine |
+| DC | Batman, Superman, Joker, Harley Quinn, Wonder Woman, Aquaman, Flash, Lanterna Verde |
+| Games | Mario, Sonic, Link, Kratos, Lara Croft, Master Chief, Pac-Man, Steve |
+| Anime | Goku, Naruto, Luffy, Gojo, Levi, Tanjiro, Edward Elric |
+
+O servidor escolhe automaticamente uma categoria que tenha personagens suficientes para todos os jogadores conectados.
+
+---
+
+## Estrutura do projeto
+
+```
+guessing-game-rpc/
+├── proto/
+│   └── game.proto          # definição dos serviços e mensagens gRPC
+├── generated/              # stubs gerados automaticamente
+├── server/
+│   ├── server.py           # servicers gRPC (GameService, ChatService)
+│   └── game_state.py       # lógica e estado centralizado do jogo
+├── client/
+│   ├── gui_client.py       # interface gráfica (CustomTkinter)
+│   └── grpc_client.py      # camada de comunicação gRPC
+├── assets/
+│   ├── characters/         # imagens dos personagens (por categoria)
+│   └── data/
+│       └── characters.json # catálogo de personagens e respostas aceitas
+└── requirements.txt
 ```
 
-Abra varios clientes para simular multiplos jogadores.
+---
 
-## Imagens
+## Tecnologias
 
-As imagens sao carregadas localmente pelo cliente a partir do caminho enviado
-pelo servidor no evento `CHARACTER_ASSIGNED`.
-
-Exemplo:
-
-```json
-{
-  "id": "batman",
-  "name": "Batman",
-  "image": "assets/characters/dc/batman.png",
-  "accepted_answers": ["batman", "homem morcego", "bruce wayne"]
-}
-```
-
-Coloque os arquivos PNG exatamente nos caminhos indicados no JSON, por exemplo:
-
-```text
-assets/characters/dc/batman.png
-assets/characters/starwars/yoda.png
-assets/characters/anime/goku.png
-```
-
-Se a imagem ainda nao existir, a GUI mostra uma mensagem com o caminho esperado.
-O nome correto do personagem nao aparece na area principal do jogador; a tela
-mostra apenas a categoria e a imagem recebida.
-
-## Adicionar Personagens
-
-Edite `assets/data/characters.json`:
-
-1. Escolha a categoria.
-2. Adicione um objeto com `id`, `name`, `image` e `accepted_answers`.
-3. Coloque o PNG no caminho informado em `image`.
-4. Use nomes de arquivo em minusculo, sem espacos, preferencialmente com `_`.
-
-Exemplo:
-
-```json
-{
-  "id": "novo_personagem",
-  "name": "Novo Personagem",
-  "image": "assets/characters/games/novo_personagem.png",
-  "accepted_answers": ["novo personagem"]
-}
-```
-
-`accepted_answers` e usado pelo servidor para validar palpites automaticamente.
-
-## Fluxo De Turno
-
-1. O servidor sorteia uma categoria e um personagem diferente para cada jogador.
-2. Todos sabem a categoria, mas cada jogador ve apenas a propria imagem.
-3. Na primeira rodada, cada jogador apenas envia uma dica publica.
-4. A partir da segunda rodada, o jogador da vez escolhe se quer fazer um unico
-   palpite antes da dica.
-5. Depois, o jogador da vez envia uma dica publica do proprio personagem.
-6. Os demais jogadores podem tentar adivinhar o personagem dele ou passar.
-7. Cada palpite e validado pelo servidor usando as respostas aceitas do
-   personagem.
-8. Se estiver correto, o servidor adiciona 10 pontos ao jogador que acertou.
-
-## Sem Polling
-
-Os clientes ficam inscritos em `SubscribeToGameEvents` e
-`SubscribeToChatEvents`. O servidor publica eventos nas filas dos streams, e os
-clientes recebem as atualizacoes automaticamente.
+- **gRPC + Protocol Buffers** — comunicação cliente-servidor com server streaming
+- **Python** — linguagem principal
+- **CustomTkinter** — interface gráfica moderna
+- **Pillow** — carregamento e redimensionamento de imagens
+- **Threading** — streams de eventos em threads dedicadas

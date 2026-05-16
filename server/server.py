@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import sys
@@ -17,15 +17,11 @@ from game_state import (  # noqa: E402
     GameState, TurnPhase, RoundEndResult, ExchangeResult, now_unix_ms,
 )
 
-HINTS_PER_SESSION = 3
-
-
 class GameService(game_pb2_grpc.GameServiceServicer):
     def __init__(self, state: GameState) -> None:
         self._state = state
 
-    # ─────────────────────────── JoinGame ─────────────────────────────
-
+    # JoinGame
     def JoinGame(self, request, context):
         player, players, created = self._state.add_player(request.player_name)
         owner_id = self._state.get_room_owner_id() or ""
@@ -50,8 +46,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             room_owner_id=owner_id,
         )
 
-    # ─────────────────────────── Subscribe ────────────────────────────
-
+    # Subscribe
     def SubscribeToGameEvents(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
@@ -72,16 +67,16 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             self._state.remove_game_subscriber(request.player_id)
             print(f"[STREAM] {player.name} saiu dos eventos de jogo.")
 
-    # ─────────────────────────── StartGame ────────────────────────────
-
+    # StartGame
     def StartGame(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
             return game_pb2.CommandResponse(success=False, message="Jogador nao encontrado.")
 
         max_rounds = request.max_rounds or 3
+        max_turns = request.max_turns or 3
         success, message, category, assignments, current_turn = self._state.start_game(
-            request.player_id, max_rounds,
+            request.player_id, max_rounds, max_turns,
         )
         if not success:
             return game_pb2.CommandResponse(success=False, message=message)
@@ -141,13 +136,9 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             self._state.publish_game_event_to_player(assignment.player.player_id, private_event)
 
         if current_turn is not None:
-            if current_turn.phase == TurnPhase.HINT:
-                self._publish_hint_phase_started(current_turn)
-            else:
-                self._publish_turn_started(current_turn)
+            self._publish_hint_phase_started(current_turn)
 
-    # ─────────────────────────── SendPublicHint ───────────────────────
-
+    # SendPublicHint
     def SendPublicHint(self, request, context):
         success, message, actor, waiting_players, current_turn, is_round_over, round_end = (
             self._state.register_public_hint(request.player_id, request.hint)
@@ -167,7 +158,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             current_turn_player_name=actor.name,
             turn_phase=game_pb2.POST_HINT_GUESSES,
             hint_cycle=hint_cycle,
-            max_hint_cycles=HINTS_PER_SESSION,
+            max_hint_cycles=self._state.get_max_turns(),
             timestamp_unix_ms=now_unix_ms(),
         )
         self._state.publish_game_event(hint_event)
@@ -178,15 +169,11 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         elif waiting_players and current_turn is not None:
             self._publish_guess_phase_started(current_turn, waiting_players)
         elif current_turn is not None:
-            if current_turn.phase == TurnPhase.HINT:
-                self._publish_hint_phase_started(current_turn)
-            else:
-                self._publish_turn_started(current_turn)
+            self._publish_hint_phase_started(current_turn)
 
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── SubmitGuess ──────────────────────────
-
+    # SubmitGuess
     def SubmitGuess(self, request, context):
         success, message, result = self._state.submit_guess(
             request.guesser_player_id, request.owner_player_id, request.guess,
@@ -197,7 +184,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         guesser = self._state.get_player(request.guesser_player_id)
         owner = self._state.get_player(request.owner_player_id)
         if guesser and owner:
-            # Evento público: anuncia que um palpite foi enviado, sem revelar o conteúdo
+            # notifica todos sem revelar o texto do palpite
             public_event = game_pb2.GameEvent(
                 type=game_pb2.GUESS_SUBMITTED,
                 message=f"{guesser.name} enviou um palpite para {owner.name}. Aguardando validacao.",
@@ -210,7 +197,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             )
             self._state.publish_game_event(public_event)
 
-            # Evento privado para o dono: com o conteúdo do palpite para validar
+            # manda o texto só para o dono validar
             pending_event = game_pb2.GameEvent(
                 type=game_pb2.PENDING_GUESS_FOR_OWNER,
                 message=f"{guesser.name} tentou adivinhar seu personagem: '{request.guess}'",
@@ -228,17 +215,13 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         if result.is_session_over and result.round_end is not None:
             self._publish_round_ended(result.round_end)
         elif result.next_turn is not None:
-            if result.next_turn.phase == TurnPhase.HINT:
-                self._publish_hint_phase_started(result.next_turn)
-            else:
-                self._publish_turn_started(result.next_turn)
+            self._publish_hint_phase_started(result.next_turn)
 
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── ValidateGuess ────────────────────────
-
+    # ValidateGuess
     def ValidateGuess(self, request, context):
-        success, message, result = self._state.validate_guess(
+        success, message, result, is_session_over, round_end = self._state.validate_guess(
             request.owner_player_id, request.guess_id, request.accepted,
         )
         if not success:
@@ -251,7 +234,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                 type=game_pb2.GUESS_ACCEPTED,
                 message=(
                     f"Palpite de {result.guesser.name} ACEITO! "
-                    f"'{result.guess_text}' — +{result.score_delta} pts (#{result.guess_order})"
+                    f"'{result.guess_text}' — +{result.score_delta} pts (#{result.guess_order}° a acertar)"
                 ),
                 actor_player_id=result.owner.player_id,
                 target_player_id=result.guesser.player_id,
@@ -281,10 +264,13 @@ class GameService(game_pb2_grpc.GameServiceServicer):
 
         self._state.publish_game_event(event)
         print(f"[GAME] {event.message}")
+
+        if is_session_over and round_end is not None:
+            self._publish_round_ended(round_end)
+
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── PassGuessOpportunity ─────────────────
-
+    # PassGuessOpportunity
     def PassGuessOpportunity(self, request, context):
         success, message, player, next_turn, is_round_over, round_end = (
             self._state.pass_guess_opportunity(request.player_id)
@@ -303,16 +289,12 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         if is_round_over and round_end is not None:
             self._publish_round_ended(round_end)
         elif next_turn is not None:
-            if next_turn.phase == TurnPhase.HINT:
-                self._publish_hint_phase_started(next_turn)
-            else:
-                self._publish_turn_started(next_turn)
+            self._publish_hint_phase_started(next_turn)
 
         print(f"[GAME] {event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── VoteForNextRound ─────────────────────
-
+    # VoteForNextRound
     def VoteForNextRound(self, request, context):
         player = self._state.get_player(request.player_id)
         if player is None:
@@ -353,8 +335,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
 
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── RequestHintExchange ──────────────────
-
+    # RequestHintExchange
     def RequestHintExchange(self, request, context):
         success, message, requester, target = self._state.request_hint_exchange(
             request.requester_player_id, request.target_player_id, request.private_hint,
@@ -386,8 +367,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         print(f"[GAME] {public_event.message}")
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── RespondHintExchange ──────────────────
-
+    # RespondHintExchange
     def RespondHintExchange(self, request, context):
         success, message, result = self._state.respond_hint_exchange(
             request.responder_player_id, request.requester_player_id,
@@ -478,8 +458,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                     timestamp_unix_ms=now_unix_ms(),
                 ))
 
-    # ─────────────────────────── SpyOnExchange ────────────────────────
-
+    # SpyOnExchange
     def SpyOnExchange(self, request, context):
         success, message = self._state.spy_on_exchange(
             request.spy_player_id, request.player_a_id, request.player_b_id,
@@ -495,19 +474,19 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             print(f"[GAME] {spy.name} esta espiando {names}.")
         return game_pb2.CommandResponse(success=True, message=message)
 
-    # ─────────────────────────── Publish helpers ──────────────────────
-
+    # Publish helpers
     def _publish_turn_started(self, turn) -> None:
+        max_turns = self._state.get_max_turns()
         event = game_pb2.GameEvent(
             type=game_pb2.TURN_STARTED,
-            message=self._turn_started_message(turn),
+            message=self._turn_started_message(turn, max_turns),
             actor_player_id=turn.player.player_id,
             current_turn_player_id=turn.player.player_id,
             current_turn_player_name=turn.player.name,
             turn_phase=self._phase_to_proto(turn.phase),
             players=self._players_to_proto(self._state.get_players()),
             hint_cycle=turn.hint_cycle,
-            max_hint_cycles=HINTS_PER_SESSION,
+            max_hint_cycles=max_turns,
             session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
@@ -515,24 +494,23 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         print(f"[GAME] {event.message}")
 
     @staticmethod
-    def _turn_started_message(turn) -> str:
-        prefix = f"Sessao {turn.session_number} · Ciclo {turn.hint_cycle}/{HINTS_PER_SESSION}"
-        if turn.phase == TurnPhase.PRE_HINT_GUESS:
-            return f"{prefix}: turno de {turn.player.name}. Pode palpitar ou seguir para a dica."
+    def _turn_started_message(turn, max_turns: int) -> str:
+        prefix = f"Sessao {turn.session_number} · Ciclo {turn.hint_cycle}/{max_turns}"
         if turn.phase == TurnPhase.HINT:
             return f"{prefix}: {turn.player.name} deve dar uma dica."
         return f"{prefix}: turno de {turn.player.name}."
 
     def _publish_hint_phase_started(self, turn) -> None:
+        max_turns = self._state.get_max_turns()
         event = game_pb2.GameEvent(
             type=game_pb2.HINT_PHASE_STARTED,
-            message=f"{turn.player.name} deve enviar uma dica publica (ciclo {turn.hint_cycle}/{HINTS_PER_SESSION}).",
+            message=f"{turn.player.name} deve enviar uma dica publica (ciclo {turn.hint_cycle}/{max_turns}).",
             actor_player_id=turn.player.player_id,
             current_turn_player_id=turn.player.player_id,
             current_turn_player_name=turn.player.name,
             turn_phase=self._phase_to_proto(turn.phase),
             hint_cycle=turn.hint_cycle,
-            max_hint_cycles=HINTS_PER_SESSION,
+            max_hint_cycles=max_turns,
             session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
@@ -540,6 +518,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
         print(f"[GAME] {event.message}")
 
     def _publish_guess_phase_started(self, turn, waiting_players) -> None:
+        max_turns = self._state.get_max_turns()
         event = game_pb2.GameEvent(
             type=game_pb2.GUESS_PHASE_STARTED,
             message=f"Todos podem tentar adivinhar o personagem de {turn.player.name} ou passar.",
@@ -550,7 +529,7 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             turn_phase=game_pb2.POST_HINT_GUESSES,
             players=self._players_to_proto(waiting_players),
             hint_cycle=turn.hint_cycle,
-            max_hint_cycles=HINTS_PER_SESSION,
+            max_hint_cycles=max_turns,
             session_number=turn.session_number,
             timestamp_unix_ms=now_unix_ms(),
         )
@@ -701,16 +680,17 @@ class GameService(game_pb2_grpc.GameServiceServicer):
             ))
 
         if current_turn is not None:
+            max_turns = self._state.get_max_turns()
             q.put(game_pb2.GameEvent(
                 type=game_pb2.TURN_STARTED,
-                message=self._turn_started_message(current_turn),
+                message=self._turn_started_message(current_turn, max_turns),
                 actor_player_id=current_turn.player.player_id,
                 current_turn_player_id=current_turn.player.player_id,
                 current_turn_player_name=current_turn.player.name,
                 turn_phase=self._phase_to_proto(current_turn.phase),
                 players=self._players_to_proto(players),
                 hint_cycle=current_turn.hint_cycle,
-                max_hint_cycles=HINTS_PER_SESSION,
+                max_hint_cycles=max_turns,
                 session_number=current_turn.session_number,
                 room_owner_id=owner_id,
                 timestamp_unix_ms=now_unix_ms(),
@@ -725,12 +705,10 @@ class GameService(game_pb2_grpc.GameServiceServicer):
                 timestamp_unix_ms=now_unix_ms(),
             ))
 
-    # ─────────────────────────── Proto helpers ────────────────────────
-
+    # Proto helpers
     @staticmethod
     def _phase_to_proto(phase: TurnPhase):
         mapping = {
-            TurnPhase.PRE_HINT_GUESS: game_pb2.PRE_HINT_GUESS,
             TurnPhase.HINT: game_pb2.HINT,
             TurnPhase.POST_HINT_GUESSES: game_pb2.POST_HINT_GUESSES,
         }

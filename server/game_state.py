@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -143,7 +143,6 @@ class ExchangeResult:
 
 
 class TurnPhase(Enum):
-    PRE_HINT_GUESS = "pre_hint_guess"
     HINT = "hint"
     POST_HINT_GUESSES = "post_hint_guesses"
 
@@ -164,9 +163,10 @@ class GameState:
         self._characters_by_player_id: dict[str, CharacterInfo] = {}
         self._turn_order: list[str] = []
         self._turn_index = 0
-        self._hint_cycle = 1          # 1 a HINTS_PER_SESSION
+        self._hint_cycle = 1          # 1 a _max_turns
         self._session_number = 0      # qual sessão estamos (1 a max_rounds)
         self._max_rounds = 1          # total de sessões a jogar
+        self._max_turns = HINTS_PER_SESSION  # turnos por sessão (configurável)
         self._phase = TurnPhase.HINT
         self._waiting_guessers: set[str] = set()
         self._public_hints: list[tuple[str, str]] = []
@@ -181,6 +181,9 @@ class GameState:
         # Palpites pendentes de validação manual pelo dono
         self._pending_guesses: dict[str, PendingGuess] = {}
 
+        # Ordem global de acertos na sessão (1º a acertar no mundo todo = 1)
+        self._global_guess_order: int = 0
+
         # Votação de nova sessão
         self._votes: dict[str, bool] = {}
 
@@ -193,8 +196,7 @@ class GameState:
 
         self._lock = threading.Lock()
 
-    # ─────────────────────────── Jogadores ────────────────────────────
-
+    # Jogadores
     def add_player(self, name: str) -> tuple[PlayerInfo, list[PlayerInfo], bool]:
         clean_name = name.strip() or "Jogador"
         with self._lock:
@@ -233,6 +235,10 @@ class GameState:
         with self._lock:
             return self._max_rounds
 
+    def get_max_turns(self) -> int:
+        with self._lock:
+            return self._max_turns
+
     def get_session_number(self) -> int:
         with self._lock:
             return self._session_number
@@ -257,10 +263,9 @@ class GameState:
                 list(self._players.values()),
             )
 
-    # ─────────────────────────── Início de partida ────────────────────
-
+    # Início de partida
     def start_game(
-        self, requesting_player_id: str, max_rounds: int
+        self, requesting_player_id: str, max_rounds: int, max_turns: int = HINTS_PER_SESSION
     ) -> tuple[bool, str, Optional[CharacterCategory], list[CharacterAssignment], Optional[TurnInfo]]:
         with self._lock:
             if self._game_started:
@@ -274,6 +279,7 @@ class GameState:
                 return False, "São necessários pelo menos 2 jogadores.", None, [], None
 
             self._max_rounds = max_rounds
+            self._max_turns = max(1, max_turns)
             self._session_number = 0
             # Zera placar ao iniciar nova partida
             for pid in self._players:
@@ -317,6 +323,7 @@ class GameState:
         self._correct_guess_order.clear()
         self._already_scored.clear()
         self._pending_guesses.clear()
+        self._global_guess_order = 0
         self._exchange_used.clear()
         self._pending_exchange = None
         self._spies.clear()
@@ -334,8 +341,7 @@ class GameState:
             category, assignments, self._current_turn_locked(),
         )
 
-    # ─────────────────────────── Dica pública ─────────────────────────
-
+    # Dica pública
     def register_public_hint(
         self, player_id: str, hint: str
     ) -> tuple[bool, str, Optional[PlayerInfo], list[PlayerInfo], Optional[TurnInfo], bool, Optional[RoundEndResult]]:
@@ -358,21 +364,10 @@ class GameState:
             self._public_hints.append((player_id, clean_hint))
             actor = current_turn.player
 
-            # Ciclo 1: apenas dicas, sem palpites pós-dica
-            if self._hint_cycle == 1:
-                self._advance_turn_locked()
-                self._phase = TurnPhase.HINT if self._hint_cycle == 1 else TurnPhase.PRE_HINT_GUESS
-                self._normalize_pre_hint_phase_locked()
-                is_over, end_result = self._check_session_over_locked()
-                return True, "Dica pública enviada.", actor, [], None if is_over else self._current_turn_locked(), is_over, end_result
-
-            # Ciclos 2+: abre fase de palpites para os elegíveis
             waiting_ids = self._eligible_guessers_for_owner_locked(actor.player_id)
             if not waiting_ids:
-                # Ninguém pode palpitar, avança direto
                 self._advance_turn_locked()
-                self._phase = TurnPhase.PRE_HINT_GUESS
-                self._normalize_pre_hint_phase_locked()
+                self._phase = TurnPhase.HINT
                 is_over, end_result = self._check_session_over_locked()
                 return True, "Dica pública enviada.", actor, [], None if is_over else self._current_turn_locked(), is_over, end_result
 
@@ -381,8 +376,7 @@ class GameState:
             self._phase = TurnPhase.POST_HINT_GUESSES
             return True, "Dica pública enviada.", actor, waiting_players, self._current_turn_locked(), False, None
 
-    # ─────────────────────────── Palpite (pendente) ───────────────────
-
+    # Palpite (pendente)
     def submit_guess(
         self, guesser_player_id: str, owner_player_id: str, guess: str
     ) -> tuple[bool, str, Optional[GuessResult]]:
@@ -407,92 +401,76 @@ class GameState:
             if current_turn is None:
                 return False, "Não há turno ativo.", None
 
-            if self._phase == TurnPhase.PRE_HINT_GUESS:
-                if guesser.player_id != current_turn.player.player_id:
-                    return False, "Apenas o jogador do turno pode agir agora.", None
-                guess_id = str(uuid.uuid4())
-                self._pending_guesses[guess_id] = PendingGuess(
-                    guess_id=guess_id, guesser=guesser, owner=owner, guess_text=clean_guess,
-                )
-                self._phase = TurnPhase.HINT
-                return True, "Palpite enviado. Aguarde validação do dono.", GuessResult(
-                    guess_id=guess_id, guesser=guesser, owner=owner, guess=clean_guess,
-                    next_turn=self._current_turn_locked(),
-                )
+            if self._phase != TurnPhase.POST_HINT_GUESSES:
+                return False, "Agora é a fase de dica pública.", None
+            if owner.player_id != current_turn.player.player_id:
+                return False, f"Agora os palpites devem ser sobre {current_turn.player.name}.", None
+            if guesser.player_id not in self._waiting_guessers:
+                return False, "Você já respondeu esta oportunidade.", None
 
-            if self._phase == TurnPhase.POST_HINT_GUESSES:
-                if owner.player_id != current_turn.player.player_id:
-                    return False, f"Agora os palpites devem ser sobre {current_turn.player.name}.", None
-                if guesser.player_id not in self._waiting_guessers:
-                    return False, "Você já respondeu esta oportunidade.", None
+            guess_id = str(uuid.uuid4())
+            self._pending_guesses[guess_id] = PendingGuess(
+                guess_id=guess_id, guesser=guesser, owner=owner, guess_text=clean_guess,
+            )
+            self._waiting_guessers.discard(guesser.player_id)
+            next_turn = self._advance_if_everyone_answered_locked()
+            is_session_over, round_end = False, None
+            if next_turn is not None:
+                is_session_over, round_end = self._check_session_over_locked()
+                if is_session_over:
+                    next_turn = None
+            return True, "Palpite enviado. Aguarde validação do dono.", GuessResult(
+                guess_id=guess_id, guesser=guesser, owner=owner, guess=clean_guess,
+                next_turn=next_turn, is_session_over=is_session_over, round_end=round_end,
+            )
 
-                guess_id = str(uuid.uuid4())
-                self._pending_guesses[guess_id] = PendingGuess(
-                    guess_id=guess_id, guesser=guesser, owner=owner, guess_text=clean_guess,
-                )
-                self._waiting_guessers.discard(guesser.player_id)
-                next_turn = self._advance_if_everyone_answered_locked()
-                is_session_over, round_end = False, None
-                if next_turn is not None:
-                    is_session_over, round_end = self._check_session_over_locked()
-                    if is_session_over:
-                        next_turn = None
-                return True, "Palpite enviado. Aguarde validação do dono.", GuessResult(
-                    guess_id=guess_id, guesser=guesser, owner=owner, guess=clean_guess,
-                    next_turn=next_turn, is_session_over=is_session_over, round_end=round_end,
-                )
-
-            return False, "Agora é a fase de dica pública.", None
-
-    # ─────────────────────────── Validação manual ─────────────────────
-
+    # Validação manual
     def validate_guess(
         self, owner_player_id: str, guess_id: str, accepted: bool
-    ) -> tuple[bool, str, Optional[ValidationResult]]:
+    ) -> tuple[bool, str, Optional[ValidationResult], bool, Optional["RoundEndResult"]]:
         with self._lock:
             pending = self._pending_guesses.get(guess_id)
             if pending is None:
-                return False, "Palpite não encontrado.", None
+                return False, "Palpite não encontrado.", None, False, None
             if pending.owner.player_id != owner_player_id:
-                return False, "Você não é o dono deste personagem.", None
+                return False, "Você não é o dono deste personagem.", None, False, None
 
             del self._pending_guesses[guess_id]
 
             if not accepted:
+                is_over, round_end = self._check_session_over_locked()
                 return True, f"Palpite de {pending.guesser.name} rejeitado.", ValidationResult(
                     guess_id=guess_id, guesser=pending.guesser, owner=pending.owner,
                     guess_text=pending.guess_text, accepted=False,
                     score_delta=0, scores=dict(self._scores), guess_order=0,
-                )
+                ), is_over, round_end
 
             # Já pontuou por este personagem?
             if pending.guesser.player_id in self._already_scored.get(pending.owner.player_id, set()):
+                is_over, round_end = self._check_session_over_locked()
                 return True, "Palpite aceito, mas jogador já pontuou por este personagem.", ValidationResult(
                     guess_id=guess_id, guesser=pending.guesser, owner=pending.owner,
                     guess_text=pending.guess_text, accepted=True,
                     score_delta=0, scores=dict(self._scores), guess_order=0,
-                )
-
-            # Verifica se a resposta bate com as accepted_answers do personagem
-            if not self._is_correct_guess_locked(pending.owner.player_id, pending.guess_text):
-                # Dono aceitou mas a resposta não bate — o dono decide, então aceita de qualquer forma
-                pass
+                ), is_over, round_end
 
             order_list = self._correct_guess_order.setdefault(pending.owner.player_id, [])
-            order = len(order_list) + 1
-            delta = _calculate_guess_points(order)
-            self._add_score_locked(pending.guesser.player_id, delta)
             order_list.append(pending.guesser.player_id)
             self._already_scored.setdefault(pending.owner.player_id, set()).add(pending.guesser.player_id)
 
-            return True, f"Palpite aceito! {pending.guesser.name} ganhou {delta} pontos (#{order}).", ValidationResult(
+            self._global_guess_order += 1
+            global_pos = self._global_guess_order
+            delta = _calculate_guess_points(global_pos)
+            self._add_score_locked(pending.guesser.player_id, delta)
+
+            is_over, round_end = self._check_session_over_locked()
+            return True, f"Palpite aceito! {pending.guesser.name} ganhou {delta} pontos (#{global_pos}° a acertar).", ValidationResult(
                 guess_id=guess_id, guesser=pending.guesser, owner=pending.owner,
                 guess_text=pending.guess_text, accepted=True,
-                score_delta=delta, scores=dict(self._scores), guess_order=order,
-            )
+                score_delta=delta, scores=dict(self._scores), guess_order=global_pos,
+            ), is_over, round_end
 
-    # ─────────────────────────── Passar oportunidade ──────────────────
-
+    # Passar oportunidade
     def pass_guess_opportunity(
         self, player_id: str
     ) -> tuple[bool, str, Optional[PlayerInfo], Optional[TurnInfo], bool, Optional[RoundEndResult]]:
@@ -508,27 +486,20 @@ class GameState:
             if current_turn is None:
                 return False, "Não há turno ativo.", None, None, False, None
 
-            if self._phase == TurnPhase.PRE_HINT_GUESS:
-                if player.player_id != current_turn.player.player_id:
-                    return False, "Apenas o jogador do turno pode passar agora.", None, current_turn, False, None
-                self._phase = TurnPhase.HINT
-                return True, "Oportunidade passada. Envie sua dica pública.", player, self._current_turn_locked(), False, None
+            if self._phase != TurnPhase.POST_HINT_GUESSES:
+                return False, "Não há oportunidade de palpite para passar agora.", None, current_turn, False, None
+            if player.player_id not in self._waiting_guessers:
+                return False, "Você já respondeu esta oportunidade.", None, current_turn, False, None
 
-            if self._phase == TurnPhase.POST_HINT_GUESSES:
-                if player.player_id not in self._waiting_guessers:
-                    return False, "Você já respondeu esta oportunidade.", None, current_turn, False, None
-                self._waiting_guessers.discard(player.player_id)
-                next_turn = self._advance_if_everyone_answered_locked()
-                if next_turn is not None:
-                    is_over, end_result = self._check_session_over_locked()
-                    if is_over:
-                        return True, "Oportunidade passada.", player, None, True, end_result
-                return True, "Oportunidade passada.", player, next_turn, False, None
+            self._waiting_guessers.discard(player.player_id)
+            next_turn = self._advance_if_everyone_answered_locked()
+            if next_turn is not None:
+                is_over, end_result = self._check_session_over_locked()
+                if is_over:
+                    return True, "Oportunidade passada.", player, None, True, end_result
+            return True, "Oportunidade passada.", player, next_turn, False, None
 
-            return False, "Não há oportunidade de palpite para passar agora.", None, current_turn, False, None
-
-    # ─────────────────────────── Votação ──────────────────────────────
-
+    # Votação
     def cast_vote(
         self, player_id: str, continue_playing: bool
     ) -> tuple[bool, str, Optional[VoteResult], Optional[tuple]]:
@@ -568,8 +539,7 @@ class GameState:
                 self._game_started = False
                 return True, "Fim de jogo.", result, None
 
-    # ─────────────────────────── Troca de dicas ───────────────────────
-
+    # Troca de dicas
     def request_hint_exchange(
         self, requester_id: str, target_id: str, hint: str
     ) -> tuple[bool, str, Optional[PlayerInfo], Optional[PlayerInfo]]:
@@ -661,8 +631,7 @@ class GameState:
             spies.append(spy_id)
             return True, f"Você está espiando a troca entre {player_a.name} e {player_b.name}."
 
-    # ─────────────────────────── Subscribers ──────────────────────────
-
+    # Subscribers
     def add_game_subscriber(self, player_id: str) -> queue.Queue:
         q: queue.Queue = queue.Queue()
         with self._lock:
@@ -701,8 +670,7 @@ class GameState:
         for q in subscribers:
             q.put(event)
 
-    # ─────────────────────────── Helpers internos ─────────────────────
-
+    # Helpers internos
     def _current_turn_locked(self) -> Optional[TurnInfo]:
         if not self._turn_order:
             return None
@@ -721,8 +689,7 @@ class GameState:
         if self._waiting_guessers:
             return None
         self._advance_turn_locked()
-        self._phase = TurnPhase.PRE_HINT_GUESS
-        self._normalize_pre_hint_phase_locked()
+        self._phase = TurnPhase.HINT
         return self._current_turn_locked()
 
     def _advance_turn_locked(self) -> None:
@@ -732,13 +699,6 @@ class GameState:
         if self._turn_index == 0:
             self._hint_cycle += 1
 
-    def _normalize_pre_hint_phase_locked(self) -> None:
-        if self._phase != TurnPhase.PRE_HINT_GUESS:
-            return
-        # Ciclo 1: nada de pré-palpite
-        if self._hint_cycle == 1:
-            self._phase = TurnPhase.HINT
-
     def _eligible_guessers_for_owner_locked(self, owner_player_id: str) -> list[str]:
         scored_set = self._already_scored.get(owner_player_id, set())
         return [
@@ -747,13 +707,22 @@ class GameState:
         ]
 
     def _check_session_over_locked(self) -> tuple[bool, Optional[RoundEndResult]]:
+        if not self._game_started:
+            return False, None
         if not self._is_session_over_locked():
             return False, None
         return True, self._end_session_locked()
 
     def _is_session_over_locked(self) -> bool:
-        # Sessão acaba quando os ciclos de dicas se esgotam
-        return self._hint_cycle > HINTS_PER_SESSION
+        if self._hint_cycle > self._max_turns:
+            return True
+        # Fim antecipado: nenhum palpite pendente E nenhum elegível restante
+        if self._pending_guesses:
+            return False
+        for owner_id in self._turn_order:
+            if self._eligible_guessers_for_owner_locked(owner_id):
+                return False
+        return bool(self._turn_order)
 
     def _end_session_locked(self) -> RoundEndResult:
         # Auto-rejeita palpites ainda pendentes
@@ -824,8 +793,6 @@ class GameState:
         answers = character.accepted_answers or (character.name,)
         return normalized in {normalize_answer(a) for a in answers}
 
-
-# ─────────────────────────── Utilitários ──────────────────────────────
 
 def _calculate_guess_points(order: int) -> int:
     return GUESS_POINTS.get(order, GUESS_POINTS_DEFAULT)
