@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import tkinter as tk
 
 import customtkinter as ctk
 import grpc
@@ -100,7 +101,20 @@ def show_modal(parent, win: ctk.CTkToplevel) -> None:
     win.geometry(f"{width}x{height}+{x}+{y}")
     win.lift()
     win.focus_set()
-    win.after(120, lambda: win.winfo_exists() and win.grab_set())
+
+    def _grab_when_viewable(retries: int = 8) -> None:
+        if not win.winfo_exists():
+            return
+        if win.winfo_viewable():
+            try:
+                win.grab_set()
+                return
+            except tk.TclError:
+                pass
+        if retries > 0:
+            win.after(70, lambda: _grab_when_viewable(retries - 1))
+
+    win.after(70, _grab_when_viewable)
 
 
 def sep(parent, row: int, col: int = 0, span: int = 4,
@@ -528,12 +542,7 @@ class GuessingGameApp(ctk.CTk):
         show_modal(self, win)
 
     def send_hint(self) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Dica Pública")
-        win.geometry("380x180")
-        win.resizable(False, False)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
+        win = modal(self, "Dica Pública", "380x180")
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -552,6 +561,7 @@ class GuessingGameApp(ctk.CTk):
 
         entry.bind("<Return>", lambda _: confirm())
         btn(body, "Enviar Dica", confirm).pack(fill="x", padx=14, pady=(0, 14))
+        show_modal(self, win)
 
     def submit_guess(self) -> None:
         guess = self.guess_entry.get().strip()
@@ -614,12 +624,7 @@ class GuessingGameApp(ctk.CTk):
         self._show_exchange_dialog(others)
 
     def _show_exchange_dialog(self, others) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Troca de Dica Privada")
-        win.geometry("420x260")
-        win.resizable(False, False)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
+        win = modal(self, "Troca de Dica Privada", "420x260")
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -656,6 +661,7 @@ class GuessingGameApp(ctk.CTk):
         hint_entry.bind("<Return>", lambda _: confirm())
         btn(body, "Enviar Pedido", confirm).pack(fill="x", padx=14, pady=(0, 6))
         btn(body, "Cancelar", win.destroy, style="ghost").pack(fill="x", padx=14, pady=(0, 14))
+        show_modal(self, win)
 
     def open_spy_dialog(self) -> None:
         if self.rpc_client is None:
@@ -668,12 +674,7 @@ class GuessingGameApp(ctk.CTk):
         self._show_spy_dialog(others)
 
     def _show_spy_dialog(self, others) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Espionar Troca de Dicas")
-        win.geometry("420x250")
-        win.resizable(False, False)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
+        win = modal(self, "Espionar Troca de Dicas", "420x250")
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -708,6 +709,7 @@ class GuessingGameApp(ctk.CTk):
 
         btn(body, "Espionar", confirm).pack(fill="x", padx=14, pady=(0, 6))
         btn(body, "Cancelar", win.destroy, style="ghost").pack(fill="x", padx=14, pady=(0, 14))
+        show_modal(self, win)
 
     def send_chat(self) -> None:
         text = self.chat_entry.get().strip()
@@ -1047,13 +1049,8 @@ class GuessingGameApp(ctk.CTk):
         if self._exchange_win and self._exchange_win.winfo_exists():
             self._exchange_win.destroy()
 
-        win = ctk.CTkToplevel(self)
+        win = modal(self, "Pedido de Troca de Dica", "460x240")
         self._exchange_win = win
-        win.title("Pedido de Troca de Dica")
-        win.geometry("460x240")
-        win.resizable(False, False)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -1093,14 +1090,11 @@ class GuessingGameApp(ctk.CTk):
             style="success").grid(row=0, column=0, sticky="ew", padx=(0, 4))
         btn(btns_f, "Recusar", reject,
             style="danger").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        show_modal(self, win)
 
     def _show_round_end(self, ev) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Sessão Encerrada")
-        win.geometry("520x480")
+        win = modal(self, "Sessão Encerrada", "520x480")
         win.resizable(True, True)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -1141,18 +1135,15 @@ class GuessingGameApp(ctk.CTk):
             color=COLORS["text_dim"]).pack(anchor="w", padx=14, pady=(12, 4))
         btn(body, "Fechar", win.destroy, style="ghost").pack(
             fill="x", padx=14, pady=(0, 14))
+        show_modal(self, win)
 
     def _show_game_end(self, ev) -> None:
         if self._end_win and self._end_win.winfo_exists():
             self._end_win.destroy()
 
-        win = ctk.CTkToplevel(self)
+        win = modal(self, "Fim de Jogo", "500x400")
         self._end_win = win
-        win.title("Fim de Jogo")
-        win.geometry("500x400")
         win.resizable(True, True)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -1179,6 +1170,7 @@ class GuessingGameApp(ctk.CTk):
 
         btn(body, "Fechar", win.destroy, style="ghost").pack(
             fill="x", padx=14, pady=(14, 14))
+        show_modal(self, win)
 
     # helpers de ui
     def _update_session_lbl(self) -> None:
