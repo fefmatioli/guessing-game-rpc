@@ -90,7 +90,7 @@ class RoundEndResult:
     score_deltas: dict[str, int]
     reveals: list[CharacterReveal]
     score_changes: list[ScoreChange]
-    is_final: bool  # True = fim do jogo, sem votação
+    is_final: bool  # True = limite de sessões configurado foi atingido
 
 
 @dataclass
@@ -98,8 +98,10 @@ class VoteResult:
     votes_continue: int
     votes_end: int
     total_players: int
+    votes_needed: int
     is_complete: bool
     continue_playing: Optional[bool]
+    new_game_config: bool = False
 
 
 @dataclass
@@ -173,6 +175,10 @@ class GameState:
 
         # Pontuação acumulada (persiste entre sessões)
         self._scores: dict[str, int] = {}
+        self._total_correct_guesses: dict[str, int] = {}
+        self._total_first_guesses: dict[str, int] = {}
+        self._session_score_deltas: dict[str, int] = {}
+        self._session_score_changes: list[ScoreChange] = []
 
         # Controle de acertos — por sessão (reset a cada sessão)
         self._correct_guess_order: dict[str, list[str]] = {}   # owner_id -> [guesser_id em ordem]
@@ -181,7 +187,7 @@ class GameState:
         # Palpites pendentes de validação manual pelo dono
         self._pending_guesses: dict[str, PendingGuess] = {}
 
-        # Ordem global de acertos na sessão (1º a acertar no mundo todo = 1)
+        # Contador auditável de acertos na sessão; a pontuação é por objeto.
         self._global_guess_order: int = 0
 
         # Votação de nova sessão
@@ -206,6 +212,8 @@ class GameState:
             player = PlayerInfo(player_id=str(uuid.uuid4()), name=clean_name)
             self._players[player.player_id] = player
             self._scores[player.player_id] = 0
+            self._total_correct_guesses[player.player_id] = 0
+            self._total_first_guesses[player.player_id] = 0
             if self._room_owner_id is None:
                 self._room_owner_id = player.player_id
             players = list(self._players.values())
@@ -219,6 +227,98 @@ class GameState:
         with self._lock:
             return list(self._players.values())
 
+    def remove_player(
+        self, player_id: str
+    ) -> tuple[
+        bool, str, Optional[PlayerInfo], list[PlayerInfo], Optional[str],
+        Optional[TurnInfo], list[PlayerInfo], bool, Optional[RoundEndResult],
+    ]:
+        with self._lock:
+            player = self._players.pop(player_id, None)
+            if player is None:
+                return (
+                    False, "Jogador não encontrado.", None, list(self._players.values()),
+                    self._room_owner_id, None, [], False, None,
+                )
+
+            self._scores.pop(player_id, None)
+            self._total_correct_guesses.pop(player_id, None)
+            self._total_first_guesses.pop(player_id, None)
+            self._session_score_deltas.pop(player_id, None)
+            self._session_score_changes = [
+                sc for sc in self._session_score_changes if sc.player_id != player_id
+            ]
+            self._characters_by_player_id.pop(player_id, None)
+            old_order = list(self._turn_order)
+            old_index = self._turn_index
+            current_id = old_order[old_index] if old_order and old_index < len(old_order) else None
+            removed_index = old_order.index(player_id) if player_id in old_order else -1
+            self._turn_order = [pid for pid in self._turn_order if pid != player_id]
+            if self._turn_order:
+                if player_id == current_id:
+                    self._turn_index = old_index if old_index < len(self._turn_order) else 0
+                elif 0 <= removed_index < old_index:
+                    self._turn_index = old_index - 1
+                else:
+                    self._turn_index = old_index
+                self._turn_index %= len(self._turn_order)
+            else:
+                self._turn_index = 0
+
+            self._waiting_guessers.discard(player_id)
+            self._already_scored.pop(player_id, None)
+            for scored in self._already_scored.values():
+                scored.discard(player_id)
+            self._correct_guess_order.pop(player_id, None)
+            for guessers in self._correct_guess_order.values():
+                while player_id in guessers:
+                    guessers.remove(player_id)
+            self._pending_guesses = {
+                gid: pg for gid, pg in self._pending_guesses.items()
+                if pg.guesser.player_id != player_id and pg.owner.player_id != player_id
+            }
+            self._votes.pop(player_id, None)
+            self._exchange_used.discard(player_id)
+            if self._pending_exchange and player_id in self._pending_exchange[:2]:
+                self._pending_exchange = None
+            self._spies = {
+                pair: [sid for sid in spies if sid != player_id]
+                for pair, spies in self._spies.items()
+                if player_id not in pair
+            }
+
+            if self._room_owner_id == player_id:
+                self._room_owner_id = next(iter(self._players), None)
+
+            current_turn: Optional[TurnInfo] = None
+            waiting_players: list[PlayerInfo] = []
+            is_over = False
+            round_end = None
+
+            if len(self._players) < 2:
+                self._game_started = False
+                self._voting_phase = False
+                self._votes.clear()
+            elif self._game_started:
+                if self._phase == TurnPhase.POST_HINT_GUESSES and not self._waiting_guessers:
+                    current_turn = self._advance_if_everyone_answered_locked()
+                    is_over, round_end = self._check_session_over_locked()
+                    if is_over:
+                        current_turn = None
+                else:
+                    current_turn = self._current_turn_locked()
+                    if self._phase == TurnPhase.POST_HINT_GUESSES:
+                        waiting_players = [
+                            self._players[pid]
+                            for pid in self._waiting_guessers
+                            if pid in self._players
+                        ]
+
+            return (
+                True, f"{player.name} saiu da sala.", player, list(self._players.values()),
+                self._room_owner_id, current_turn, waiting_players, is_over, round_end,
+            )
+
     def get_room_owner_id(self) -> Optional[str]:
         with self._lock:
             return self._room_owner_id
@@ -227,9 +327,23 @@ class GameState:
         with self._lock:
             return dict(self._scores)
 
+    def get_tiebreak_stats(self) -> dict[str, tuple[int, int]]:
+        with self._lock:
+            return {
+                pid: (
+                    self._total_first_guesses.get(pid, 0),
+                    self._total_correct_guesses.get(pid, 0),
+                )
+                for pid in self._players
+            }
+
     def get_current_category(self) -> Optional[CharacterCategory]:
         with self._lock:
             return self._current_category
+
+    def is_guess_text_valid(self, owner_player_id: str, guess: str) -> bool:
+        with self._lock:
+            return self._is_correct_guess_locked(owner_player_id, guess)
 
     def get_max_rounds(self) -> int:
         with self._lock:
@@ -270,6 +384,8 @@ class GameState:
         with self._lock:
             if self._game_started:
                 return False, "A partida já foi iniciada.", self._current_category, [], self._current_turn_locked()
+            if self._voting_phase:
+                return False, "Aguarde a votação atual terminar.", None, [], None
             if requesting_player_id != self._room_owner_id:
                 return False, "Apenas o dono da sala pode iniciar a partida.", None, [], None
             if max_rounds <= 0:
@@ -284,6 +400,8 @@ class GameState:
             # Zera placar ao iniciar nova partida
             for pid in self._players:
                 self._scores[pid] = 0
+                self._total_correct_guesses[pid] = 0
+                self._total_first_guesses[pid] = 0
 
             possible = [c for c in self._categories if len(c.characters) >= player_count]
             if not possible:
@@ -324,6 +442,8 @@ class GameState:
         self._already_scored.clear()
         self._pending_guesses.clear()
         self._global_guess_order = 0
+        self._session_score_deltas = {pid: 0 for pid in self._players}
+        self._session_score_changes.clear()
         self._exchange_used.clear()
         self._pending_exchange = None
         self._spies.clear()
@@ -458,16 +578,25 @@ class GameState:
             order_list.append(pending.guesser.player_id)
             self._already_scored.setdefault(pending.owner.player_id, set()).add(pending.guesser.player_id)
 
+            order_for_object = len(order_list)
             self._global_guess_order += 1
-            global_pos = self._global_guess_order
-            delta = _calculate_guess_points(global_pos)
-            self._add_score_locked(pending.guesser.player_id, delta)
+            self._total_correct_guesses[pending.guesser.player_id] = (
+                self._total_correct_guesses.get(pending.guesser.player_id, 0) + 1
+            )
+            if order_for_object == 1:
+                self._total_first_guesses[pending.guesser.player_id] = (
+                    self._total_first_guesses.get(pending.guesser.player_id, 0) + 1
+                )
+            delta = _calculate_guess_points(order_for_object)
+            self._add_session_score_locked(
+                pending.guesser.player_id, delta, f"GUESS_{order_for_object}"
+            )
 
             is_over, round_end = self._check_session_over_locked()
-            return True, f"Palpite aceito! {pending.guesser.name} ganhou {delta} pontos (#{global_pos}° a acertar).", ValidationResult(
+            return True, f"Palpite aceito! {pending.guesser.name} ganhou {delta} pontos (#{order_for_object}° a acertar este objeto).", ValidationResult(
                 guess_id=guess_id, guesser=pending.guesser, owner=pending.owner,
                 guess_text=pending.guess_text, accepted=True,
-                score_delta=delta, scores=dict(self._scores), guess_order=global_pos,
+                score_delta=delta, scores=dict(self._scores), guess_order=order_for_object,
             ), is_over, round_end
 
     # Passar oportunidade
@@ -514,18 +643,24 @@ class GameState:
 
             self._votes[player_id] = continue_playing
             total = len(self._players)
+            votes_needed = total // 2 + 1
             votes_continue = sum(1 for v in self._votes.values() if v)
             votes_end = sum(1 for v in self._votes.values() if not v)
-            is_complete = len(self._votes) >= total
+            is_complete = (
+                votes_continue >= votes_needed
+                or votes_end >= votes_needed
+                or len(self._votes) >= total
+            )
 
             result = VoteResult(
                 votes_continue=votes_continue, votes_end=votes_end,
-                total_players=total, is_complete=is_complete, continue_playing=None,
+                total_players=total, votes_needed=votes_needed,
+                is_complete=is_complete, continue_playing=None,
             )
             if not is_complete:
                 return True, "Voto registrado.", result, None
 
-            do_continue = votes_continue >= votes_end
+            do_continue = votes_continue >= votes_needed
             result.continue_playing = do_continue
 
             if do_continue and self._session_number < self._max_rounds:
@@ -534,6 +669,11 @@ class GameState:
                     self._voting_phase = False
                     return False, msg, result, None
                 return True, "Nova sessão iniciando!", result, (category, assignments, turn)
+            elif do_continue:
+                self._voting_phase = False
+                self._game_started = False
+                result.new_game_config = True
+                return True, "Nova partida aprovada. O dono da sala pode configurar a próxima partida.", result, None
             else:
                 self._voting_phase = False
                 self._game_started = False
@@ -602,9 +742,9 @@ class GameState:
                     continue
                 caught = random.random() < SPY_CATCH_CHANCE
                 if caught:
-                    self._add_score_locked(spy_id, SPY_PENALTY)
+                    self._add_session_score_locked(spy_id, SPY_PENALTY, "SPY_PENALTY")
                 else:
-                    self._add_score_locked(spy_id, SPY_REWARD)
+                    self._add_session_score_locked(spy_id, SPY_REWARD, "SPY_REWARD")
                 spy_results.append((spy, caught))
 
             return True, f"{requester.name} e {responder.name} trocaram dicas privadas.", ExchangeResult(
@@ -625,6 +765,11 @@ class GameState:
             if spy_id in {player_a_id, player_b_id}:
                 return False, "Você não pode espionar uma troca que envolve você."
             pair_key = frozenset({player_a_id, player_b_id})
+            if self._pending_exchange is None:
+                return False, "Não há troca pendente para espionar agora."
+            pending_pair = frozenset({self._pending_exchange[0], self._pending_exchange[1]})
+            if pair_key != pending_pair:
+                return False, "A troca pendente envolve outros jogadores."
             spies = self._spies.setdefault(pair_key, [])
             if spy_id in spies:
                 return False, "Você já está espiando esta dupla."
@@ -728,8 +873,10 @@ class GameState:
         # Auto-rejeita palpites ainda pendentes
         self._pending_guesses.clear()
 
-        score_deltas: dict[str, int] = {pid: 0 for pid in self._players}
-        changes: list[ScoreChange] = []
+        score_deltas: dict[str, int] = {
+            pid: self._session_score_deltas.get(pid, 0) for pid in self._players
+        }
+        changes: list[ScoreChange] = list(self._session_score_changes)
         total_others = len(self._players) - 1
 
         for owner_id in self._players:
@@ -739,7 +886,7 @@ class GameState:
             # Bônus solo para o único que acertou
             if n == 1:
                 solo_id = guessers[0]
-                self._add_score_locked(solo_id, SOLO_BONUS)
+                self._add_session_score_locked(solo_id, SOLO_BONUS, "SOLO_BONUS")
                 score_deltas[solo_id] = score_deltas.get(solo_id, 0) + SOLO_BONUS
                 changes.append(ScoreChange(solo_id, "SOLO_BONUS", SOLO_BONUS))
 
@@ -757,9 +904,12 @@ class GameState:
                     owner_delta = OWNER_POINTS_THREE
 
                 if owner_delta != 0:
-                    self._add_score_locked(owner_id, owner_delta)
+                    reason = "OWNER_" + (
+                        "ALL" if n >= total_others
+                        else ("ONE" if n == 1 else ("TWO" if n == 2 else "THREE"))
+                    )
+                    self._add_session_score_locked(owner_id, owner_delta, reason)
                     score_deltas[owner_id] = score_deltas.get(owner_id, 0) + owner_delta
-                    reason = "OWNER_" + ("ALL" if n >= total_others else ("ONE" if n == 1 else ("TWO" if n == 2 else "THREE")))
                     changes.append(ScoreChange(owner_id, reason, owner_delta))
 
         reveals = [
@@ -771,9 +921,8 @@ class GameState:
         is_final = self._session_number >= self._max_rounds
 
         self._game_started = False
-        if not is_final:
-            self._voting_phase = True
-            self._votes.clear()
+        self._voting_phase = True
+        self._votes.clear()
 
         return RoundEndResult(
             score_deltas=score_deltas,
@@ -784,6 +933,11 @@ class GameState:
 
     def _add_score_locked(self, player_id: str, points: int) -> None:
         self._scores[player_id] = self._scores.get(player_id, 0) + points
+
+    def _add_session_score_locked(self, player_id: str, points: int, reason: str) -> None:
+        self._add_score_locked(player_id, points)
+        self._session_score_deltas[player_id] = self._session_score_deltas.get(player_id, 0) + points
+        self._session_score_changes.append(ScoreChange(player_id, reason, points))
 
     def _is_correct_guess_locked(self, owner_player_id: str, guess: str) -> bool:
         character = self._characters_by_player_id.get(owner_player_id)

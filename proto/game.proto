@@ -13,6 +13,7 @@ service GameService {
   rpc RespondHintExchange(RespondHintExchangeRequest) returns (CommandResponse);
   rpc SpyOnExchange(SpyOnExchangeRequest) returns (CommandResponse);
   rpc VoteForNextRound(VoteForNextRoundRequest) returns (CommandResponse);
+  rpc LeaveGame(LeaveGameRequest) returns (CommandResponse);
   rpc SubscribeToGameEvents(SubscribeRequest) returns (stream GameEvent);
 }
 
@@ -54,6 +55,8 @@ enum GameEventType {
   ROUND_SCORE_SUMMARY = 29;
   FINAL_RANKING = 30;
   PENDING_GUESS_FOR_OWNER = 31;
+  PLAYER_LEFT = 32;
+  NEW_GAME_APPROVED = 33;
 }
 
 enum TurnPhase {
@@ -210,6 +213,10 @@ message SpyOnExchangeRequest {
 message VoteForNextRoundRequest {
   string player_id = 1;
   bool continue_playing = 2;
+}
+
+message LeaveGameRequest {
+  string player_id = 1;
 }
 
 message ChatMessageRequest {

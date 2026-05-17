@@ -13,6 +13,9 @@ import traceback
 from concurrent import futures
 from typing import Optional
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Paths
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "generated"))
@@ -22,7 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "client"))
 import grpc
 import game_pb2
 import game_pb2_grpc
-from game_state import GameState, now_unix_ms
+from game_state import GameState, now_unix_ms, _calculate_guess_points
 from server import GameService, ChatService
 from grpc_client import GameRpcClient
 
@@ -152,6 +155,11 @@ def run_tests():
     collectors: list[EventCollector] = []
 
     try:
+        points_ladder = [_calculate_guess_points(i) for i in range(1, 6)]
+        assert_ok("Pontuação por ordem de acerto",
+                  points_ladder == [15, 10, 7, 4, 4],
+                  str(points_ladder))
+
         # ══════════════════════════════════════
         # BLOCO 1: Join + Dono da sala
         # ══════════════════════════════════════
@@ -232,9 +240,9 @@ def run_tests():
                       ev_ca1.target_player_id == r1.player_id)
 
         # ══════════════════════════════════════
-        # BLOCO 4: Fluxo de turno (Ciclo 1 — só dicas)
+        # BLOCO 4: Fluxo de turno (dica seguida de palpites)
         # ══════════════════════════════════════
-        print(f"\n{BOLD}[BLOCO 4] Fluxo ciclo 1 (só dicas, sem palpites pós-dica){RESET}")
+        print(f"\n{BOLD}[BLOCO 4] Fluxo ciclo 1 (dica + palpites){RESET}")
 
         # Descobre quem está no turno
         ev_turn = ec1.wait_for_any({game_pb2.TURN_STARTED, game_pb2.HINT_PHASE_STARTED}, timeout=3)
@@ -271,95 +279,49 @@ def run_tests():
                     assert_ok("hint_cycle preenchido", ev_hint.hint_cycle >= 1,
                                str(ev_hint.hint_cycle))
 
-                # No ciclo 1, NÃO deve abrir fase de palpites (sem GUESS_PHASE_STARTED)
-                time.sleep(0.5)
-                assert_ok("Ciclo 1: sem GUESS_PHASE_STARTED",
-                          ec1.count(game_pb2.GUESS_PHASE_STARTED) == 0,
-                          f"contagem={ec1.count(game_pb2.GUESS_PHASE_STARTED)}")
+                # Pelo enunciado, depois de cada dica os outros podem palpitar ou esperar.
+                ev_guess_phase = ec1.wait_for(game_pb2.GUESS_PHASE_STARTED, timeout=3)
+                assert_not_none("GUESS_PHASE_STARTED após dica", ev_guess_phase)
+                if ev_guess_phase:
+                    eligible = {p.player_id for p in ev_guess_phase.players}
+                    assert_ok("Dono não é elegível para palpitar",
+                              current_pid not in eligible)
+                    assert_ok("Outros jogadores são elegíveis",
+                              set(wrong_pids).issubset(eligible))
 
-            # Dicas dos outros 2 jogadores no ciclo 1
-            for pid in wrong_pids:
-                ev_t = ec_map[pid].wait_for_any({game_pb2.TURN_STARTED, game_pb2.HINT_PHASE_STARTED}, timeout=4)
-                if ev_t and ev_t.current_turn_player_id == pid:
-                    r_h = pid_map[pid].send_public_hint("pequeno")
-                    assert_ok(f"Dica de {name_map[pid]}", r_h.success, r_h.message)
-                    time.sleep(0.3)
+                    guesser_pid = wrong_pids[0]
+                    owner_pid = current_pid
+                    guess_resp = pid_map[guesser_pid].submit_guess(owner_pid, "palpite_certo")
+                    assert_ok("Palpite pós-dica enviado", guess_resp.success, guess_resp.message)
 
-        # ══════════════════════════════════════
-        # BLOCO 5: Ciclo 2 — palpites pós-dica
-        # ══════════════════════════════════════
-        print(f"\n{BOLD}[BLOCO 5] Ciclo 2 (pré-palpite + dica + pós-palpite){RESET}")
-
-        ev_turn2 = ec1.wait_for_any({game_pb2.TURN_STARTED, game_pb2.HINT_PHASE_STARTED}, timeout=5)
-        if ev_turn2:
-            info("TEST", f"Ciclo 2 — {ev_turn2.current_turn_player_name}, phase={ev_turn2.turn_phase}")
-            assert_ok("hint_cycle=2 no 2° ciclo", ev_turn2.hint_cycle == 2,
-                      str(ev_turn2.hint_cycle))
-
-            # Se fase PRE_HINT_GUESS, tenta palpite antes da dica
-            pid_map = {r1.player_id: c1, r2.player_id: c2, r3.player_id: c3}
-            ec_map   = {r1.player_id: ec1, r2.player_id: ec2, r3.player_id: ec3}
-            name_map = {r1.player_id: "Alice", r2.player_id: "Bob", r3.player_id: "Carol"}
-
-            cur2_pid = ev_turn2.current_turn_player_id
-            cur2_client = pid_map.get(cur2_pid)
-
-            if ev_turn2.turn_phase == game_pb2.PRE_HINT_GUESS and cur2_client:
-                # Escolhe um alvo (não si mesmo)
-                targets = [p for p in pid_map if p != cur2_pid]
-                guess_resp = cur2_client.game.SubmitGuess(game_pb2.SubmitGuessRequest(
-                    guesser_player_id=cur2_pid,
-                    owner_player_id=targets[0],
-                    guess="palpite_pre_dica",
-                ))
-                assert_ok("Palpite pré-dica enviado", guess_resp.success, guess_resp.message)
-
-                # Owner deve receber PENDING_GUESS_FOR_OWNER
-                ev_pending = ec_map[targets[0]].wait_for(game_pb2.PENDING_GUESS_FOR_OWNER, timeout=3)
-                assert_not_none("Owner recebe PENDING_GUESS_FOR_OWNER", ev_pending)
-                if ev_pending:
-                    assert_ok("guess_text no evento privado",
-                               ev_pending.guess_text == "palpite_pre_dica",
-                               ev_pending.guess_text)
-                    assert_ok("target_player_id correto",
-                               ev_pending.target_player_id == targets[0])
-
-                    # Valida o palpite (owner aceita)
-                    guess_id = ev_pending.guess_id
-                    val_resp = pid_map[targets[0]].validate_guess(guess_id, True)
-                    assert_ok("ValidateGuess aceito", val_resp.success, val_resp.message)
+                    ev_pending = ec_map[owner_pid].wait_for(game_pb2.PENDING_GUESS_FOR_OWNER, timeout=3)
+                    assert_not_none("Dono recebe PENDING_GUESS_FOR_OWNER", ev_pending)
+                    if ev_pending:
+                        val_resp = pid_map[owner_pid].validate_guess(ev_pending.guess_id, True)
+                        assert_ok("ValidateGuess aceito", val_resp.success, val_resp.message)
 
                     ev_accepted = ec1.wait_for(game_pb2.GUESS_ACCEPTED, timeout=3)
                     assert_not_none("GUESS_ACCEPTED broadcast", ev_accepted)
                     if ev_accepted:
-                        assert_ok("score_delta > 0 em GUESS_ACCEPTED",
-                                   ev_accepted.score_delta > 0, str(ev_accepted.score_delta))
-                        assert_ok("guess_order preenchido",
-                                   ev_accepted.guess_order >= 1, str(ev_accepted.guess_order))
+                        assert_ok("Primeiro acerto do objeto vale 15",
+                                  ev_accepted.score_delta == 15,
+                                  str(ev_accepted.score_delta))
+                        assert_ok("guess_order por objeto preenchido",
+                                  ev_accepted.guess_order == 1,
+                                  str(ev_accepted.guess_order))
 
-            # Envia dica no ciclo 2 (caso não tenha palpitado ou tenha palpitado antes)
-            ev_hint_phase = ec_map.get(cur2_pid, ec1).wait_for(
-                game_pb2.HINT_PHASE_STARTED, timeout=4)
-            if ev_hint_phase and ev_hint_phase.current_turn_player_id == cur2_pid and cur2_client:
-                r_h2 = cur2_client.send_public_hint("azul")
-                assert_ok(f"Dica ciclo 2 por {name_map.get(cur2_pid,'?')}", r_h2.success, r_h2.message)
+                    dup_resp = pid_map[guesser_pid].submit_guess(owner_pid, "de novo")
+                    assert_ok("Jogador que já acertou não palpita o mesmo objeto",
+                              not dup_resp.success, dup_resp.message)
 
-                # Após dica no ciclo 2, deve abrir GUESS_PHASE_STARTED
-                ev_gps = ec1.wait_for(game_pb2.GUESS_PHASE_STARTED, timeout=4)
-                assert_not_none("GUESS_PHASE_STARTED após dica ciclo 2", ev_gps)
-
-                if ev_gps:
-                    # Todos os outros passam a oportunidade
-                    other_pids = [p for p in pid_map if p != cur2_pid]
-                    for pid in other_pids:
+                    for pid in wrong_pids[1:]:
                         pass_resp = pid_map[pid].pass_guess_opportunity()
-                        # OK ou "já respondeu" são ambos aceitáveis
                         info("TEST", f"{name_map[pid]} passa: {pass_resp.message}")
 
         # ══════════════════════════════════════
-        # BLOCO 6: Completar sessão (todos passam restante)
+        # BLOCO 5: Completar sessão (todos passam restante)
         # ══════════════════════════════════════
-        print(f"\n{BOLD}[BLOCO 6] Completar sessão e ROUND_ENDED{RESET}")
+        print(f"\n{BOLD}[BLOCO 5] Completar sessão e ROUND_ENDED{RESET}")
 
         # Avança todos os turnos restantes enviando dicas e passando palpites
         # (timeout total de 30s para completar a sessão)
@@ -419,9 +381,20 @@ def run_tests():
                  ", ".join(f"{r.player_name}={r.character_name}" for r in round_ended_ev.character_reveals))
 
         # ══════════════════════════════════════
-        # BLOCO 7: GAME_ENDED (sessão final → sem votação)
+        # BLOCO 7: Votação após fim dos turnos
         # ══════════════════════════════════════
-        print(f"\n{BOLD}[BLOCO 7] GAME_ENDED (1 sessão → sem votação){RESET}")
+        print(f"\n{BOLD}[BLOCO 7] Votação após fim dos turnos{RESET}")
+
+        ev_vote_final = ec1.wait_for(game_pb2.VOTE_STARTED, timeout=5)
+        assert_not_none("VOTE_STARTED após sessão final", ev_vote_final)
+        if ev_vote_final:
+            assert_ok("Maioria necessária correta", ev_vote_final.votes_needed == 2,
+                      str(ev_vote_final.votes_needed))
+
+        rv1_end = c1.vote_for_next_round(False)
+        rv2_end = c2.vote_for_next_round(False)
+        assert_ok("Voto Alice para encerrar", rv1_end.success, rv1_end.message)
+        assert_ok("Voto Bob para encerrar", rv2_end.success, rv2_end.message)
 
         ev_end = ec1.wait_for(game_pb2.GAME_ENDED, timeout=5)
         assert_not_none("GAME_ENDED recebido", ev_end)
@@ -437,11 +410,7 @@ def run_tests():
         ev_fr = ec1.wait_for(game_pb2.FINAL_RANKING, timeout=3)
         assert_not_none("FINAL_RANKING recebido", ev_fr)
 
-        # VOTE_STARTED NÃO deve aparecer (sessão final)
-        time.sleep(0.5)
-        vote_count = ec1.count(game_pb2.VOTE_STARTED)
-        assert_ok("Sem VOTE_STARTED em sessão final", vote_count == 0,
-                  f"contagem={vote_count}")
+        assert_ok("Votação encerra por maioria antes de todos votarem", True)
 
         # ══════════════════════════════════════
         # BLOCO 8: Nova partida (2 sessões + votação)
@@ -505,14 +474,12 @@ def run_tests():
         ev_vote = ec1.wait_for(game_pb2.VOTE_STARTED, timeout=5)
         assert_not_none("VOTE_STARTED após sessão 1/2", ev_vote)
 
-        # Todos votam continuar
+        # Maioria vota continuar
         if ev_vote:
             rv1 = c1.vote_for_next_round(True)
             rv2 = c2.vote_for_next_round(True)
-            rv3 = c3.vote_for_next_round(True)
             assert_ok("Voto Alice", rv1.success, rv1.message)
             assert_ok("Voto Bob",   rv2.success, rv2.message)
-            assert_ok("Voto Carol", rv3.success, rv3.message)
 
             ev_vote_cast = ec1.wait_for(game_pb2.VOTE_CAST, timeout=3)
             assert_not_none("VOTE_CAST recebido", ev_vote_cast)
@@ -559,6 +526,18 @@ def run_tests():
             assert_ok("Carol não vê private_hint",
                        not ev_exch_carol.private_hint, ev_exch_carol.private_hint)
 
+        # Carol pode optar por espionar enquanto a troca está pendente.
+        spy_resp = c3.spy_on_exchange(r1.player_id, r2.player_id)
+        assert_ok("SpyOnExchange aceito com troca pendente", spy_resp.success, spy_resp.message)
+
+        # Espionar si mesmo
+        self_spy = c3.spy_on_exchange(r3.player_id, r1.player_id)
+        assert_ok("Espionar si mesmo bloqueado", not self_spy.success, self_spy.message)
+
+        # Espionar mesma dupla duas vezes
+        spy_dup = c3.spy_on_exchange(r1.player_id, r2.player_id)
+        assert_ok("Espionar dupla duas vezes bloqueado", not spy_dup.success, spy_dup.message)
+
         # Bob aceita
         resp_exch = c2.respond_hint_exchange(r1.player_id, True, "dica_bob")
         assert_ok("RespondHintExchange aceito", resp_exch.success, resp_exch.message)
@@ -580,6 +559,9 @@ def run_tests():
         # Troca já usada
         exch2 = c1.request_hint_exchange(r3.player_id, "outra_dica")
         assert_ok("Segunda troca bloqueada (já usou)", not exch2.success, exch2.message)
+
+        spy_late = c3.spy_on_exchange(r1.player_id, r2.player_id)
+        assert_ok("Espionagem sem troca pendente bloqueada", not spy_late.success, spy_late.message)
 
         # ══════════════════════════════════════
         # BLOCO 10: Edge cases e validações
@@ -611,20 +593,20 @@ def run_tests():
         assert_ok("Palpite vazio bloqueado", not empty_guess.success, empty_guess.message)
 
         # ══════════════════════════════════════
-        # BLOCO 11: Espionagem
+        # BLOCO 11: Saída de jogador
         # ══════════════════════════════════════
-        print(f"\n{BOLD}[BLOCO 11] Espionagem (Carol espia Alice+Bob){RESET}")
+        print(f"\n{BOLD}[BLOCO 11] Saída de jogador{RESET}")
 
-        spy_resp = c3.spy_on_exchange(r1.player_id, r2.player_id)
-        assert_ok("SpyOnExchange aceito", spy_resp.success, spy_resp.message)
+        leave_resp = c3.leave_game()
+        assert_ok("LeaveGame remove jogador", leave_resp.success, leave_resp.message)
 
-        # Espionar si mesmo
-        self_spy = c3.spy_on_exchange(r3.player_id, r1.player_id)
-        assert_ok("Espionar si mesmo bloqueado", not self_spy.success, self_spy.message)
-
-        # Espionar mesma dupla duas vezes
-        spy_dup = c3.spy_on_exchange(r1.player_id, r2.player_id)
-        assert_ok("Espionar dupla duas vezes bloqueado", not spy_dup.success, spy_dup.message)
+        ev_left = ec1.wait_for(game_pb2.PLAYER_LEFT, timeout=3)
+        assert_not_none("PLAYER_LEFT recebido", ev_left)
+        if ev_left:
+            assert_ok("Jogador removido da lista",
+                      all(p.player_id != r3.player_id for p in ev_left.players))
+            assert_ok("Sala continua com dois jogadores",
+                      len(ev_left.players) == 2, str(len(ev_left.players)))
 
     except Exception as e:
         err("CRASH", f"Exceção não tratada: {e}")

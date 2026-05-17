@@ -84,6 +84,11 @@ class GameServiceStub(object):
                 request_serializer=game__pb2.VoteForNextRoundRequest.SerializeToString,
                 response_deserializer=game__pb2.CommandResponse.FromString,
                 _registered_method=True)
+        self.LeaveGame = channel.unary_unary(
+                '/guessinggame.GameService/LeaveGame',
+                request_serializer=game__pb2.LeaveGameRequest.SerializeToString,
+                response_deserializer=game__pb2.CommandResponse.FromString,
+                _registered_method=True)
         self.SubscribeToGameEvents = channel.unary_stream(
                 '/guessinggame.GameService/SubscribeToGameEvents',
                 request_serializer=game__pb2.SubscribeRequest.SerializeToString,
@@ -154,6 +159,12 @@ class GameServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def LeaveGame(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def SubscribeToGameEvents(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -211,6 +222,11 @@ def add_GameServiceServicer_to_server(servicer, server):
             'VoteForNextRound': grpc.unary_unary_rpc_method_handler(
                     servicer.VoteForNextRound,
                     request_deserializer=game__pb2.VoteForNextRoundRequest.FromString,
+                    response_serializer=game__pb2.CommandResponse.SerializeToString,
+            ),
+            'LeaveGame': grpc.unary_unary_rpc_method_handler(
+                    servicer.LeaveGame,
+                    request_deserializer=game__pb2.LeaveGameRequest.FromString,
                     response_serializer=game__pb2.CommandResponse.SerializeToString,
             ),
             'SubscribeToGameEvents': grpc.unary_stream_rpc_method_handler(
@@ -488,6 +504,33 @@ class GameService(object):
             target,
             '/guessinggame.GameService/VoteForNextRound',
             game__pb2.VoteForNextRoundRequest.SerializeToString,
+            game__pb2.CommandResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LeaveGame(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guessinggame.GameService/LeaveGame',
+            game__pb2.LeaveGameRequest.SerializeToString,
             game__pb2.CommandResponse.FromString,
             options,
             channel_credentials,

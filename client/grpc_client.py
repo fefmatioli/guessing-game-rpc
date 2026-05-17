@@ -95,6 +95,11 @@ class GameRpcClient:
             )
         )
 
+    def leave_game(self):
+        if not self.player_id:
+            return None
+        return self.game.LeaveGame(game_pb2.LeaveGameRequest(player_id=self.player_id))
+
     def request_hint_exchange(self, target_player_id: str, private_hint: str):
         return self.game.RequestHintExchange(
             game_pb2.RequestHintExchangeRequest(

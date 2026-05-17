@@ -140,6 +140,7 @@ class GuessingGameApp(ctk.CTk):
         # Estado
         self.rpc_client: GameRpcClient | None = None
         self._streams_started = False
+        self._leaving = False
 
         self.category_name = ""
         self.char_image: ctk.CTkImage | None = None
@@ -147,10 +148,14 @@ class GuessingGameApp(ctk.CTk):
         self.current_turn_id = ""
         self.turn_phase = game_pb2.TURN_PHASE_UNKNOWN
         self.players_by_name: dict[str, str] = {}
+        self.can_guess_current_turn = False
 
         self.game_started = False
         self.voting_phase = False
         self.already_voted = False
+        self.votes_continue = 0
+        self.votes_end = 0
+        self.votes_needed = 0
         self.responded = False
         self.room_owner_id = ""
 
@@ -205,7 +210,9 @@ class GuessingGameApp(ctk.CTk):
         self.name_entry.bind("<Return>", lambda _: self.join_game())
 
         self.join_btn = btn(login, "Entrar", self.join_game, width=88, height=32)
-        self.join_btn.grid(row=0, column=1)
+        self.join_btn.grid(row=0, column=1, padx=(0, 8))
+        self.leave_btn = btn(login, "Sair", self.leave_game, style="ghost", width=72, height=32)
+        self.leave_btn.grid(row=0, column=2)
 
         status = ctk.CTkFrame(tb, fg_color="transparent")
         status.grid(row=0, column=3, padx=(12, 20), sticky="e")
@@ -222,8 +229,13 @@ class GuessingGameApp(ctk.CTk):
         p.grid_rowconfigure(5, weight=1)
         p.grid_columnconfigure(0, weight=1)
 
-        lbl(p, "Jogadores", style="head", color=COLORS["text_sub"]).grid(
-            row=0, column=0, sticky="w", padx=14, pady=(14, 6))
+        header = ctk.CTkFrame(p, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 6))
+        header.grid_columnconfigure(0, weight=1)
+        lbl(header, "Jogadores", style="head", color=COLORS["text_sub"]).grid(
+            row=0, column=0, sticky="w")
+        self.owner_lbl = lbl(header, "Dono: —", style="small", color=COLORS["text_dim"])
+        self.owner_lbl.grid(row=0, column=1, sticky="e")
         sep(p, 1, padx=(10, 10), pady=(0, 6))
 
         self.players_frame = ctk.CTkScrollableFrame(
@@ -422,14 +434,16 @@ class GuessingGameApp(ctk.CTk):
             for ev in self.rpc_client.subscribe_to_game_events():
                 self.after(0, self._on_game_event, ev)
         except grpc.RpcError as e:
-            self.after(0, self._log, f"Stream encerrado: {e.details()}")
+            if not self._leaving:
+                self.after(0, self._log, f"Stream encerrado: {e.details()}")
 
     def _chat_stream(self) -> None:
         try:
             for ev in self.rpc_client.subscribe_to_chat_events():
                 self.after(0, self._append_chat, f"{ev.player_name}: {ev.text}")
         except grpc.RpcError as e:
-            self.after(0, self._append_chat, f"Chat encerrado: {e.details()}")
+            if not self._leaving:
+                self.after(0, self._append_chat, f"Chat encerrado: {e.details()}")
 
     # ações
     def start_game(self) -> None:
@@ -532,14 +546,34 @@ class GuessingGameApp(ctk.CTk):
             self._update_actions()
 
     def vote_continue(self) -> None:
-        self._cmd("VoteForNextRound", lambda: self.rpc_client.vote_for_next_round(True))
-        self.already_voted = True
-        self._update_actions()
+        ok = self._cmd("VoteForNextRound", lambda: self.rpc_client.vote_for_next_round(True))
+        if ok:
+            self.already_voted = True
+            self._update_actions()
 
     def vote_end(self) -> None:
-        self._cmd("VoteForNextRound", lambda: self.rpc_client.vote_for_next_round(False))
-        self.already_voted = True
-        self._update_actions()
+        ok = self._cmd("VoteForNextRound", lambda: self.rpc_client.vote_for_next_round(False))
+        if ok:
+            self.already_voted = True
+            self._update_actions()
+
+    def leave_game(self) -> None:
+        if self.rpc_client is None:
+            self._reset_to_lobby()
+            return
+        self._leaving = True
+        try:
+            try:
+                self.rpc_client.leave_game()
+            except Exception:
+                pass
+            self.rpc_client.close()
+        finally:
+            self.rpc_client = None
+            self._streams_started = False
+            self._reset_to_lobby()
+            self._set_connected(False)
+            self._leaving = False
 
     def open_exchange_dialog(self) -> None:
         if self.rpc_client is None:
@@ -618,7 +652,7 @@ class GuessingGameApp(ctk.CTk):
 
         lbl(body, "Espionar troca de dicas", style="head").pack(
             anchor="w", padx=14, pady=(14, 4))
-        lbl(body, "Escolha dois jogadores. Há chance de ser descoberto.",
+        lbl(body, "Escolha a dupla com uma solicitação de troca pendente.",
             style="small", color=COLORS["text_sub"]).pack(anchor="w", padx=14, pady=(0, 10))
 
         names = [p.name for p in others]
@@ -678,15 +712,18 @@ class GuessingGameApp(ctk.CTk):
 
     # tratamento de eventos
     def _on_game_event(self, ev) -> None:
+        if self._leaving:
+            return
         t = ev.type
 
-        if t in {game_pb2.PLAYER_JOINED, game_pb2.TURN_STARTED} and ev.players:
+        if t in {game_pb2.PLAYER_JOINED, game_pb2.PLAYER_LEFT, game_pb2.TURN_STARTED} and ev.players:
             self._set_players(list(ev.players))
 
         if ev.room_owner_id:
             self.room_owner_id = ev.room_owner_id
             if self.rpc_client:
                 self.rpc_client.room_owner_id = ev.room_owner_id
+            self._update_owner_label()
 
         if ev.max_rounds > 0:
             self.max_rounds = ev.max_rounds
@@ -702,6 +739,7 @@ class GuessingGameApp(ctk.CTk):
             self.game_started = True
             self.voting_phase = False
             self.already_voted = False
+            self.can_guess_current_turn = False
             self._pending.clear()
             self._refresh_pending()
 
@@ -709,6 +747,7 @@ class GuessingGameApp(ctk.CTk):
             self.game_started = True
             self.voting_phase = False
             self.already_voted = False
+            self.can_guess_current_turn = False
             self.category_lbl.configure(text=ev.category_name or "—")
             self._load_placeholder()
             self.char_name_lbl.configure(text="—")
@@ -724,7 +763,16 @@ class GuessingGameApp(ctk.CTk):
 
         elif t in {game_pb2.TURN_STARTED, game_pb2.HINT_PHASE_STARTED,
                    game_pb2.GUESS_PHASE_STARTED}:
-            self.responded = False
+            eligible_ids = {p.player_id for p in ev.players}
+            self.can_guess_current_turn = (
+                t == game_pb2.GUESS_PHASE_STARTED
+                and self.rpc_client is not None
+                and self.rpc_client.player_id in eligible_ids
+            )
+            self.responded = (
+                t == game_pb2.GUESS_PHASE_STARTED
+                and not self.can_guess_current_turn
+            )
             self.game_started = True
             self.current_turn_name = ev.current_turn_player_name
             self.current_turn_id = ev.current_turn_player_id
@@ -738,6 +786,7 @@ class GuessingGameApp(ctk.CTk):
 
         elif t == game_pb2.ROUND_ENDED:
             self.game_started = False
+            self.can_guess_current_turn = False
             self.turn_lbl.configure(text="Sessão encerrada", text_color=COLORS["amber"])
             self._show_round_end(ev)
 
@@ -745,22 +794,55 @@ class GuessingGameApp(ctk.CTk):
             self.voting_phase = True
             self.already_voted = False
             self.game_started = False
+            self.can_guess_current_turn = False
+            self.votes_continue = ev.votes_continue
+            self.votes_end = ev.votes_end
+            self.votes_needed = ev.votes_needed
             self.turn_lbl.configure(text="Votação em andamento", text_color=COLORS["amber"])
+
+        elif t == game_pb2.VOTE_CAST:
+            self.votes_continue = ev.votes_continue
+            self.votes_end = ev.votes_end
+            self.votes_needed = ev.votes_needed
 
         elif t == game_pb2.GAME_ENDED:
             self.game_started = False
             self.voting_phase = False
+            self.votes_continue = 0
+            self.votes_end = 0
+            self.votes_needed = 0
             self.current_turn_id = ""
             self.turn_phase = game_pb2.TURN_PHASE_UNKNOWN
             self.responded = False
+            self.can_guess_current_turn = False
             self.turn_lbl.configure(text="Partida encerrada", text_color=COLORS["text_dim"])
             self._show_game_end(ev)
+
+        elif t == game_pb2.NEW_GAME_APPROVED:
+            self.game_started = False
+            self.voting_phase = False
+            self.already_voted = False
+            self.votes_continue = 0
+            self.votes_end = 0
+            self.votes_needed = 0
+            self.current_turn_id = ""
+            self.turn_phase = game_pb2.TURN_PHASE_UNKNOWN
+            self.responded = False
+            self.can_guess_current_turn = False
+            self.turn_lbl.configure(text="Nova partida aprovada", text_color=COLORS["green"])
+
+        elif t == game_pb2.PLAYER_LEFT:
+            self._set_players(ev.players)
+            if ev.room_owner_id:
+                self.room_owner_id = ev.room_owner_id
+                self._update_owner_label()
 
         elif t == game_pb2.PENDING_GUESS_FOR_OWNER:
             if self.rpc_client and ev.target_player_id == self.rpc_client.player_id:
                 self._pending[ev.guess_id] = {
                     "guesser": ev.guesser_player_name,
                     "guess":   ev.guess_text,
+                    "suggested": ev.accepted,
                 }
                 self._refresh_pending()
 
@@ -818,10 +900,14 @@ class GuessingGameApp(ctk.CTk):
             return
 
         if self.voting_phase:
+            vote_text = (
+                f"Continuar {self.votes_continue}/{self.votes_needed} · "
+                f"Encerrar {self.votes_end}/{self.votes_needed}"
+            ) if self.votes_needed else "Votação em andamento"
             if self.already_voted:
-                self.action_lbl.configure(text="Aguardando votos dos outros jogadores...")
+                self.action_lbl.configure(text=f"{vote_text}. Aguardando decisão...")
             else:
-                self.action_lbl.configure(text="Fim de sessão! Votar:")
+                self.action_lbl.configure(text=f"Fim de sessão! {vote_text}")
                 self._show(self.vote_yes_btn, self.primary_frame, 0, 0)
                 self._show(self.vote_no_btn,  self.primary_frame, 0, 1)
             return
@@ -845,7 +931,7 @@ class GuessingGameApp(ctk.CTk):
             self._show(self.hint_btn, self.primary_frame, 0, 0, span=2)
             self._show(self.exchange_btn, self.secondary_frame, 0, 0, span=2)
 
-        elif is_post and not is_mine and not self.responded:
+        elif is_post and not is_mine and self.can_guess_current_turn and not self.responded:
             self.action_lbl.configure(
                 text=f"Tente adivinhar o personagem de {self.current_turn_name}:")
             self._show(self.guess_entry, self.primary_frame, 0, 0, span=2)
@@ -864,6 +950,8 @@ class GuessingGameApp(ctk.CTk):
 
         else:
             wait_msg = "Respondido. Aguardando os outros." if self.responded else "Aguarde o turno."
+            if is_post and not is_mine and not self.can_guess_current_turn:
+                wait_msg = "Você já acertou ou respondeu esta oportunidade. Aguarde o próximo turno."
             self.action_lbl.configure(text=wait_msg)
             if n_players >= 3:
                 self._show(self.exchange_btn, self.secondary_frame, 0, 0)
@@ -910,9 +998,13 @@ class GuessingGameApp(ctk.CTk):
                 f"{info['guesser']}: \"{info['guess']}\"",
                 style="small", color=COLORS["text"]).grid(
                 row=0, column=0, sticky="w", padx=8, pady=(6, 2))
+            suggestion = "Sugestão: bate com a lista de respostas." \
+                if info.get("suggested") else "Sugestão: não bate com a lista cadastrada."
+            lbl(row_f, suggestion, style="small", color=COLORS["text_dim"]).grid(
+                row=1, column=0, sticky="w", padx=8, pady=(0, 4))
 
             btns_f = ctk.CTkFrame(row_f, fg_color="transparent")
-            btns_f.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+            btns_f.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
             btns_f.grid_columnconfigure(0, weight=1)
             btns_f.grid_columnconfigure(1, weight=1)
 
@@ -985,7 +1077,7 @@ class GuessingGameApp(ctk.CTk):
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
 
-        title = "Última sessão — Jogo encerrado!" if ev.is_final_session else "Sessão encerrada!"
+        title = "Limite de sessões atingido" if ev.is_final_session else "Sessão encerrada!"
         tc = COLORS["gold"] if ev.is_final_session else COLORS["amber"]
         lbl(body, title, style="head", color=tc).pack(anchor="w", padx=14, pady=(14, 10))
 
@@ -1015,7 +1107,7 @@ class GuessingGameApp(ctk.CTk):
                 lbl(body, f"  {pos} {s.player_name}: {s.score} pts",
                     style="body", color=c).pack(anchor="w", padx=22)
 
-        nota = "Esta foi a última sessão." if ev.is_final_session \
+        nota = "Votação iniciada — decida se abre nova partida ou encerra." if ev.is_final_session \
             else "Votação iniciada — decida se continua ou encerra."
         lbl(body, nota, style="small",
             color=COLORS["text_dim"]).pack(anchor="w", padx=14, pady=(12, 4))
@@ -1057,15 +1149,8 @@ class GuessingGameApp(ctk.CTk):
                 lbl(body, f"  {pos_s} {name}: {score} pts",
                     style="body", color=c).pack(anchor="w", padx=22)
 
-        btn(body, "Nova Partida", self._new_game, style="primary").pack(
-            fill="x", padx=14, pady=(14, 6))
         btn(body, "Fechar", win.destroy, style="ghost").pack(
-            fill="x", padx=14, pady=(0, 14))
-
-    def _new_game(self) -> None:
-        if self._end_win and self._end_win.winfo_exists():
-            self._end_win.destroy()
-        self.start_game()
+            fill="x", padx=14, pady=(14, 14))
 
     # helpers de ui
     def _update_session_lbl(self) -> None:
@@ -1137,6 +1222,17 @@ class GuessingGameApp(ctk.CTk):
                 is_me=(p.player_id == self.rpc_client.player_id),
                 is_owner=(p.player_id == self.room_owner_id),
             ).pack(fill="x", pady=3, padx=4)
+        self._update_owner_label()
+
+    def _update_owner_label(self) -> None:
+        owner_name = "—"
+        players = self.rpc_client.players if self.rpc_client else []
+        for p in players:
+            if p.player_id == self.room_owner_id:
+                owner_name = p.name
+                break
+        if hasattr(self, "owner_lbl"):
+            self.owner_lbl.configure(text=f"Dono: {owner_name}")
 
     def _refresh_scores(self, scores) -> None:
         for w in self.scores_frame.winfo_children():
@@ -1152,11 +1248,45 @@ class GuessingGameApp(ctk.CTk):
     def _set_connected(self, connected: bool) -> None:
         self.name_entry.configure(state="disabled" if connected else "normal")
         self.join_btn.configure(state="disabled" if connected else "normal")
+        self.leave_btn.configure(state="normal" if connected else "disabled")
         self.chat_entry.configure(state="normal" if connected else "disabled")
         if not connected:
             self.conn_dot.configure(text_color=COLORS["text_dim"])
             self.conn_lbl.configure(text="Desconectado", text_color=COLORS["text_dim"])
         self._update_actions()
+
+    def _reset_to_lobby(self) -> None:
+        self.category_name = ""
+        self.current_turn_name = ""
+        self.current_turn_id = ""
+        self.turn_phase = game_pb2.TURN_PHASE_UNKNOWN
+        self.players_by_name = {}
+        self.game_started = False
+        self.voting_phase = False
+        self.already_voted = False
+        self.votes_continue = 0
+        self.votes_end = 0
+        self.votes_needed = 0
+        self.responded = False
+        self.room_owner_id = ""
+        self.can_guess_current_turn = False
+        self.session_number = 0
+        self.max_rounds = 1
+        self.hint_cycle = 1
+        self.max_hint_cycles = 3
+        self._pending.clear()
+        for frame in (self.players_frame, self.scores_frame, self.pending_frame):
+            for w in frame.winfo_children():
+                w.destroy()
+        self.pending_frame.grid_remove()
+        self.category_lbl.configure(text="Aguardando")
+        self.session_lbl.configure(text="")
+        self.turn_lbl.configure(text="Aguardando início...", text_color=COLORS["text_dim"])
+        self.char_name_lbl.configure(text="—")
+        self._load_placeholder()
+        self.action_lbl.configure(text="Entre na partida para jogar.")
+        self.guess_entry.delete(0, "end")
+        self._update_owner_label()
 
     def _load_placeholder(self) -> None:
         img = _placeholder_img((280, 280))
@@ -1186,7 +1316,7 @@ class GuessingGameApp(ctk.CTk):
 
     def _on_close(self) -> None:
         if self.rpc_client:
-            self.rpc_client.close()
+            self.leave_game()
         self.destroy()
 
 
