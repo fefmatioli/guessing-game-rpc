@@ -73,12 +73,12 @@ def btn(parent, text, command, style="primary", **kw) -> ctk.CTkButton:
 
 def modal(parent, title: str, geometry: str) -> ctk.CTkToplevel:
     win = ctk.CTkToplevel(parent)
-    win.withdraw()
     win.title(title)
     win.geometry(geometry)
     win.resizable(False, False)
     win.configure(fg_color=COLORS["bg"])
     win.transient(parent)
+    win._modal_geometry = geometry
     return win
 
 
@@ -88,14 +88,19 @@ def show_modal(parent, win: ctk.CTkToplevel) -> None:
 
     width = win.winfo_width()
     height = win.winfo_height()
+    if width <= 1 or height <= 1:
+        base_geometry = getattr(win, "_modal_geometry", "380x270").split("+", 1)[0]
+        width_s, height_s = base_geometry.lower().split("x", 1)
+        width = int(width_s)
+        height = int(height_s)
+
     x = parent.winfo_rootx() + max((parent.winfo_width() - width) // 2, 0)
     y = parent.winfo_rooty() + max((parent.winfo_height() - height) // 2, 0)
 
     win.geometry(f"{width}x{height}+{x}+{y}")
-    win.deiconify()
     win.lift()
-    win.focus_force()
-    win.after(80, win.grab_set)
+    win.focus_set()
+    win.after(120, lambda: win.winfo_exists() and win.grab_set())
 
 
 def sep(parent, row: int, col: int = 0, span: int = 4,
