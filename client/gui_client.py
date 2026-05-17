@@ -71,6 +71,33 @@ def btn(parent, text, command, style="primary", **kw) -> ctk.CTkButton:
     return ctk.CTkButton(parent, text=text, command=command, **{**BTN[style], **kw})
 
 
+def modal(parent, title: str, geometry: str) -> ctk.CTkToplevel:
+    win = ctk.CTkToplevel(parent)
+    win.withdraw()
+    win.title(title)
+    win.geometry(geometry)
+    win.resizable(False, False)
+    win.configure(fg_color=COLORS["bg"])
+    win.transient(parent)
+    return win
+
+
+def show_modal(parent, win: ctk.CTkToplevel) -> None:
+    win.update_idletasks()
+    parent.update_idletasks()
+
+    width = win.winfo_width()
+    height = win.winfo_height()
+    x = parent.winfo_rootx() + max((parent.winfo_width() - width) // 2, 0)
+    y = parent.winfo_rooty() + max((parent.winfo_height() - height) // 2, 0)
+
+    win.geometry(f"{width}x{height}+{x}+{y}")
+    win.deiconify()
+    win.lift()
+    win.focus_force()
+    win.after(80, win.grab_set)
+
+
 def sep(parent, row: int, col: int = 0, span: int = 4,
         padx=(12, 12), pady=(4, 4)) -> ctk.CTkFrame:
     f = ctk.CTkFrame(parent, height=1, fg_color=COLORS["border"])
@@ -447,12 +474,7 @@ class GuessingGameApp(ctk.CTk):
 
     # ações
     def start_game(self) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Iniciar Partida")
-        win.geometry("380x270")
-        win.resizable(False, False)
-        win.configure(fg_color=COLORS["bg"])
-        win.grab_set()
+        win = modal(self, "Iniciar Partida", "380x270")
 
         body = card(win)
         body.pack(fill="both", expand=True, padx=14, pady=14)
@@ -498,6 +520,7 @@ class GuessingGameApp(ctk.CTk):
 
         turns_entry.bind("<Return>", lambda _: confirm())
         btn(body, "Iniciar Partida", confirm).pack(fill="x", padx=14, pady=(0, 14))
+        show_modal(self, win)
 
     def send_hint(self) -> None:
         win = ctk.CTkToplevel(self)
